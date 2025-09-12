@@ -7,12 +7,19 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, instrument};
 
+use crate::auction::AuctionManager;
 use crate::paymaster_manager::PaymasterManager;
-use crate::{AuctioneerAPIServer, AuctioneerConfig, BuildTransactionRequest, BuildTransactionResponse, Error, ExecuteRequest, ExecuteResponse, TokenPrice};
+use crate::{
+    AuctionResult, AuctioneerAPIServer, AuctioneerConfig, BuildTransactionRequest, BuildTransactionResponse, Error, ExecuteRequest, ExecuteResponse, TokenPrice,
+};
+use starknet::core::types::Felt;
+use std::collections::HashMap;
 
 pub struct AuctioneerServer {
     pub config: AuctioneerConfig,
     pub paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>,
+    pub auction_results: Arc<RwLock<HashMap<Felt, AuctionResult>>>,
+    pub auction_manager: AuctionManager,
 }
 
 impl AuctioneerServer {
@@ -20,6 +27,8 @@ impl AuctioneerServer {
         Self {
             config,
             paymaster_manager: Arc::new(RwLock::new(None)),
+            auction_results: Arc::new(RwLock::new(HashMap::new())),
+            auction_manager: AuctionManager::new(),
         }
     }
 
@@ -108,9 +117,38 @@ impl AuctioneerAPIServer for AuctioneerServer {
         }
     }
 
-    #[instrument(name = "paymaster_buildTransaction", skip(self, _ext, _params))]
-    async fn build_transaction(&self, _ext: &Extensions, _params: BuildTransactionRequest) -> Result<BuildTransactionResponse, Error> {
-        Err(Error::NotYetImplemented)
+    #[instrument(name = "paymaster_buildTransaction", skip(self, _ext, params))]
+    async fn build_transaction(&self, _ext: &Extensions, params: BuildTransactionRequest) -> Result<BuildTransactionResponse, Error> {
+        // Get active paymasters
+        let manager = self.paymaster_manager.read().await;
+        let paymaster_manager = manager.as_ref().ok_or(Error::NoActivePaymasters)?;
+        let active_paymasters = paymaster_manager.get_active_paymasters().await;
+
+        if active_paymasters.is_empty() {
+            return Err(Error::NoActivePaymasters);
+        }
+
+        // Only process non-sponsored transactions
+        if params.parameters.fee_mode().is_sponsored() {
+            return Err(Error::NotYetImplemented);
+        }
+
+        // Prepare paymaster list for auction
+        let paymasters: Vec<(String, String)> = active_paymasters
+            .into_iter()
+            .map(|(name, info)| (name, info.config.url))
+            .collect();
+
+        // Run the auction
+        let auction_result = self.auction_manager.run_auction(paymasters, params).await?;
+
+        // Store auction result
+        {
+            let mut results = self.auction_results.write().await;
+            results.insert(auction_result.auction_id, auction_result.clone());
+        }
+
+        Ok(auction_result.response)
     }
 
     #[instrument(name = "paymaster_executeTransaction", skip(self, _ext, _params))]

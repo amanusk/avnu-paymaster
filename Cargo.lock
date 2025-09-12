@@ -2497,6 +2497,7 @@ dependencies = [
  "hyper 1.6.0",
  "jsonrpsee",
  "paymaster-rpc",
+ "paymaster-starknet",
  "reqwest",
  "serde",
  "serde_json",

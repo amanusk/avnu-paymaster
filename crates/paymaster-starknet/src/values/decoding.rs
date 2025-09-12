@@ -16,6 +16,15 @@ impl DecodeFromTypedValue for Felt {
     }
 }
 
+impl DecodeFromTypedValue for String {
+    fn decode(value: &Value) -> Result<Self, Error> {
+        match value {
+            Value::String(value) => Ok(value.clone()),
+            _ => Err(Error::TypedDataDecoding("cannot decode value as string".to_string())),
+        }
+    }
+}
+
 impl<T: DecodeFromTypedValue> DecodeFromTypedValue for Vec<T> {
     fn decode(value: &Value) -> Result<Self, Error> {
         let decoder = TypedValueDecoder::new(value);

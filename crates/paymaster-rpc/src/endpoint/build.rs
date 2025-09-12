@@ -12,7 +12,7 @@ use crate::endpoint::validation::{check_is_allowed_fee_mode, check_is_supported_
 use crate::endpoint::RequestContext;
 use crate::Error;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BuildTransactionRequest {
     pub transaction: TransactionParameters,
     pub parameters: ExecutionParameters,
