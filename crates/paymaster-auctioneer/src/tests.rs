@@ -12,34 +12,34 @@ mod tests {
             chain_id: "SN_SEPOLIA".to_string(),
             port: 8080,
             log_level: "info".to_string(),
-            paymasters: vec![
-                PaymasterConfig {
-                    name: "test-paymaster".to_string(),
-                    url: "http://localhost:8081".to_string(),
-                    enabled: true,
-                },
-            ],
+            paymasters: vec![PaymasterConfig {
+                name: "test-paymaster".to_string(),
+                url: "http://localhost:8081".to_string(),
+                enabled: true,
+            }],
         }
     }
 
     #[tokio::test]
-    async fn test_health_endpoint_returns_not_implemented() {
+    async fn test_health_endpoint_returns_false_when_no_paymasters() {
         let config = create_test_config();
         let server = AuctioneerServer::new(config);
         let result = server.health(&Extensions::default()).await;
 
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::NotYetImplemented));
+        // Should return false when no paymaster manager is initialized
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), false);
     }
 
     #[tokio::test]
-    async fn test_is_available_endpoint_returns_not_implemented() {
+    async fn test_is_available_endpoint_returns_false_when_no_paymasters() {
         let config = create_test_config();
         let server = AuctioneerServer::new(config);
         let result = server.is_available(&Extensions::default()).await;
 
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::NotYetImplemented));
+        // Should return false when no paymaster manager is initialized
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), false);
     }
 
     #[tokio::test]
@@ -108,30 +108,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_supported_tokens_endpoint_returns_not_implemented() {
+    async fn test_get_supported_tokens_endpoint_returns_empty_when_no_paymasters() {
         let config = create_test_config();
         let server = AuctioneerServer::new(config);
         let result = server.get_supported_tokens(&Extensions::default()).await;
 
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::NotYetImplemented));
+        // Should return empty vector when no paymaster manager is initialized
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn test_all_endpoints_return_not_implemented_error() {
+    async fn test_all_endpoints_behavior() {
         let config = create_test_config();
         let server = AuctioneerServer::new(config);
         let ext = Extensions::default();
 
-        // Test health endpoint
+        // Test health endpoint - should return false when no paymaster manager
         let health_result = server.health(&ext).await;
-        assert!(health_result.is_err());
-        assert!(matches!(health_result.unwrap_err(), Error::NotYetImplemented));
+        assert!(health_result.is_ok());
+        assert_eq!(health_result.unwrap(), false);
 
-        // Test is_available endpoint
+        // Test is_available endpoint - should return false when no paymaster manager
         let available_result = server.is_available(&ext).await;
-        assert!(available_result.is_err());
-        assert!(matches!(available_result.unwrap_err(), Error::NotYetImplemented));
+        assert!(available_result.is_ok());
+        assert_eq!(available_result.unwrap(), false);
 
         // Test build_transaction endpoint
         let build_params = paymaster_rpc::BuildTransactionRequest {
@@ -181,9 +182,9 @@ mod tests {
             assert!(matches!(e, Error::NotYetImplemented));
         }
 
-        // Test get_supported_tokens endpoint
+        // Test get_supported_tokens endpoint - should return empty vector when no paymaster manager
         let tokens_result = server.get_supported_tokens(&ext).await;
-        assert!(tokens_result.is_err());
-        assert!(matches!(tokens_result.unwrap_err(), Error::NotYetImplemented));
+        assert!(tokens_result.is_ok());
+        assert!(tokens_result.unwrap().is_empty());
     }
 }
