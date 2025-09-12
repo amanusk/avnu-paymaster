@@ -1,0 +1,31 @@
+[package]
+name = "paymaster-auctioneer"
+version = { workspace = true }
+edition = { workspace = true }
+repository = { workspace = true }
+
+[dependencies]
+async-trait = { workspace = true }
+jsonrpsee = { workspace = true, features = ["server", "macros", "client"] }
+paymaster-rpc = { path = "../paymaster-rpc" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["arbitrary_precision", "raw_value"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["time", "sync", "macros", "rt-multi-thread"] }
+tower = { workspace = true }
+tower-http = { workspace = true, features = ["cors"] }
+tracing = { workspace = true, features = ['attributes'] }
+hyper = { workspace = true }
+starknet = { workspace = true }
+
+[dev-dependencies]
+jsonrpsee = { workspace = true, features = ["client"] }
+reqwest = { workspace = true, features = ["json"] }
+
+[[example]]
+name = "basic_usage"
+path = "examples/basic_usage.rs"
+
+[dependencies.tracing-subscriber]
+version = "0.3"
+features = ["fmt"]
