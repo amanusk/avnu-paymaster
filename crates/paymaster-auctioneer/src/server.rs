@@ -97,39 +97,70 @@ impl AuctioneerServer {
 impl AuctioneerAPIServer for AuctioneerServer {
     #[instrument(name = "paymaster_health", skip(self))]
     async fn health(&self, _: &Extensions) -> Result<bool, Error> {
+        info!("Health check endpoint invoked");
         let manager = self.paymaster_manager.read().await;
         if let Some(manager) = manager.as_ref() {
             let active_count = manager.count_active_paymasters().await;
+            info!("Health check: {} active paymasters", active_count);
             Ok(active_count > 0)
         } else {
+            info!("Health check: No paymaster manager available");
             Ok(false)
         }
     }
 
     #[instrument(name = "paymaster_isAvailable", skip(self, _ext))]
     async fn is_available(&self, _ext: &Extensions) -> Result<bool, Error> {
+        info!("Is available endpoint invoked");
         let manager = self.paymaster_manager.read().await;
         if let Some(manager) = manager.as_ref() {
             let active_count = manager.count_active_paymasters().await;
+            info!("Is available check: {} active paymasters", active_count);
             Ok(active_count > 0)
         } else {
+            info!("Is available check: No paymaster manager available");
             Ok(false)
         }
     }
 
     #[instrument(name = "paymaster_buildTransaction", skip(self, _ext, params))]
     async fn build_transaction(&self, _ext: &Extensions, params: BuildTransactionRequest) -> Result<BuildTransactionResponse, Error> {
+        info!("Build transaction endpoint invoked");
+        info!("Transaction details: fee_mode={:?}", params.parameters.fee_mode());
+
+        // Log transaction-specific details
+        match &params.transaction {
+            paymaster_rpc::TransactionParameters::Invoke { invoke } => {
+                info!("Invoke transaction: user_address={:?}, calls_count={}", invoke.user_address, invoke.calls.len());
+            },
+            paymaster_rpc::TransactionParameters::Deploy { deployment } => {
+                info!("Deploy transaction: address={:?}, class_hash={:?}", deployment.address, deployment.class_hash);
+            },
+            paymaster_rpc::TransactionParameters::DeployAndInvoke { deployment, invoke } => {
+                info!(
+                    "DeployAndInvoke transaction: address={:?}, user_address={:?}, calls_count={}",
+                    deployment.address,
+                    invoke.user_address,
+                    invoke.calls.len()
+                );
+            },
+        }
+
         // Get active paymasters
         let manager = self.paymaster_manager.read().await;
         let paymaster_manager = manager.as_ref().ok_or(Error::NoActivePaymasters)?;
         let active_paymasters = paymaster_manager.get_active_paymasters().await;
 
+        info!("Found {} active paymasters for auction", active_paymasters.len());
+
         if active_paymasters.is_empty() {
+            info!("No active paymasters available, returning error");
             return Err(Error::NoActivePaymasters);
         }
 
         // Only process non-sponsored transactions
         if params.parameters.fee_mode().is_sponsored() {
+            info!("Sponsored transaction detected, not yet implemented");
             return Err(Error::NotYetImplemented);
         }
 
@@ -139,8 +170,18 @@ impl AuctioneerAPIServer for AuctioneerServer {
             .map(|(name, info)| (name, info.config.url))
             .collect();
 
+        info!("Starting auction with {} paymasters", paymasters.len());
+        for (name, url) in &paymasters {
+            info!("  - Paymaster: {} at {}", name, url);
+        }
+
         // Run the auction
         let auction_result = self.auction_manager.run_auction(paymasters, params).await?;
+
+        info!(
+            "Auction completed: winner={}, auction_id={:?}, gas_token={:?}, amount={:?}",
+            auction_result.winning_paymaster, auction_result.auction_id, auction_result.gas_token, auction_result.amount
+        );
 
         // Store auction result
         {
@@ -148,21 +189,26 @@ impl AuctioneerAPIServer for AuctioneerServer {
             results.insert(auction_result.auction_id, auction_result.clone());
         }
 
+        info!("Build transaction completed successfully");
         Ok(auction_result.response)
     }
 
     #[instrument(name = "paymaster_executeTransaction", skip(self, _ext, _params))]
     async fn execute_transaction(&self, _ext: &Extensions, _params: ExecuteRequest) -> Result<ExecuteResponse, Error> {
+        info!("Execute transaction endpoint invoked (not yet implemented)");
         Err(Error::NotYetImplemented)
     }
 
     #[instrument(name = "paymaster_getSupportedTokens", skip(self, _ext))]
     async fn get_supported_tokens(&self, _ext: &Extensions) -> Result<Vec<TokenPrice>, Error> {
+        info!("Get supported tokens endpoint invoked");
         let manager = self.paymaster_manager.read().await;
         if let Some(manager) = manager.as_ref() {
             let tokens = manager.get_all_supported_tokens().await;
+            info!("Retrieved {} unique supported tokens (deduplicated by token address)", tokens.len());
             Ok(tokens)
         } else {
+            info!("No paymaster manager available, returning empty token list");
             Ok(Vec::new())
         }
     }

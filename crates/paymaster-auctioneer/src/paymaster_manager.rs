@@ -258,14 +258,18 @@ impl PaymasterManager {
     /// Get all supported tokens from all active paymasters
     pub async fn get_all_supported_tokens(&self) -> Vec<TokenPrice> {
         let paymasters = self.paymasters.read().await;
-        let mut all_tokens = Vec::new();
+        let mut token_map = std::collections::HashMap::new();
 
         for paymaster_info in paymasters.values() {
             if paymaster_info.state == PaymasterState::Active {
-                all_tokens.extend(paymaster_info.supported_tokens.clone());
+                for token in &paymaster_info.supported_tokens {
+                    // Use token_address as the key to ensure uniqueness
+                    token_map.insert(token.token_address, *token);
+                }
             }
         }
 
-        all_tokens
+        // Convert the HashMap values back to a Vec
+        token_map.into_values().collect()
     }
 }
