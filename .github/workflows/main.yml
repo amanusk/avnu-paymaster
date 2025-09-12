@@ -2,7 +2,7 @@ name: Tests and linter
 
 on:
   push:
-    branches: [ main ]
+    branches: [main, feat/auctioneer]
 
 jobs:
   check:
