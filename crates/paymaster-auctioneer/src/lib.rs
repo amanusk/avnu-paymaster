@@ -1,10 +1,40 @@
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::types::ErrorObject;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 // Re-export types from paymaster-rpc for convenience
 pub use paymaster_rpc::{BuildTransactionRequest, BuildTransactionResponse, ExecuteRequest, ExecuteResponse, TokenPrice};
+
+/// Configuration for a single paymaster
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaymasterConfig {
+    /// Name of the paymaster
+    pub name: String,
+    /// URL endpoint of the paymaster
+    pub url: String,
+    /// Whether this paymaster is enabled
+    pub enabled: bool,
+}
+
+/// Main configuration for the auctioneer
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuctioneerConfig {
+    /// Time for the auction to complete in milliseconds
+    pub auction_timeout_ms: u64,
+    /// Time to check liveness of connected paymasters in milliseconds
+    pub heartbeat_interval_ms: u64,
+    /// Time after which a non-responsive paymaster is removed in milliseconds
+    pub cleanup_interval_ms: u64,
+    /// Starknet chain ID
+    pub chain_id: String,
+    /// Port to run the server on
+    pub port: u16,
+    /// Log level (trace, debug, info, warn, error)
+    pub log_level: String,
+    /// List of paymasters the auctioneer is trying to connect to
+    pub paymasters: Vec<PaymasterConfig>,
+}
 
 #[rpc(server, client)]
 pub trait AuctioneerAPI {

@@ -11,6 +11,7 @@ members = [
     "crates/paymaster-sponsoring",
     "crates/paymaster-cli", 
     "crates/paymaster",
+    "crates/paymaster-auctioneer",
 ]
 
 [workspace.package]

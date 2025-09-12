@@ -2,22 +2,43 @@ use async_trait::async_trait;
 use hyper::http::Extensions;
 use jsonrpsee::server::middleware::http::ProxyGetRequestLayer;
 use jsonrpsee::server::{RpcServiceBuilder, ServerBuilder, ServerHandle};
+use std::fs;
 use tracing::{info, instrument};
 
-use crate::{AuctioneerAPIServer, BuildTransactionRequest, BuildTransactionResponse, Error, ExecuteRequest, ExecuteResponse, TokenPrice};
+use crate::{AuctioneerAPIServer, AuctioneerConfig, BuildTransactionRequest, BuildTransactionResponse, Error, ExecuteRequest, ExecuteResponse, TokenPrice};
 
 pub struct AuctioneerServer {
-    // Configuration will be added later
+    pub config: AuctioneerConfig,
 }
 
 impl AuctioneerServer {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(config: AuctioneerConfig) -> Self {
+        Self { config }
+    }
+
+    /// Load configuration from a JSON file
+    pub fn from_config_file(path: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let config_data = fs::read_to_string(path)?;
+        let config: AuctioneerConfig = serde_json::from_str(&config_data)?;
+        Ok(Self::new(config))
     }
 
     pub async fn start(self) -> Result<ServerHandle, Box<dyn std::error::Error + Send + Sync>> {
-        let url = "0.0.0.0:8080"; // Default port, will be configurable later
+        let url = format!("0.0.0.0:{}", self.config.port);
         info!("Starting Auctioneer RPC server at {}", url);
+        info!("Chain ID: {}", self.config.chain_id);
+        info!("Auction timeout: {}ms", self.config.auction_timeout_ms);
+        info!("Heartbeat interval: {}ms", self.config.heartbeat_interval_ms);
+        info!("Cleanup interval: {}ms", self.config.cleanup_interval_ms);
+        info!("Configured paymasters: {}", self.config.paymasters.len());
+
+        for paymaster in &self.config.paymasters {
+            if paymaster.enabled {
+                info!("  - {}: {} (enabled)", paymaster.name, paymaster.url);
+            } else {
+                info!("  - {}: {} (disabled)", paymaster.name, paymaster.url);
+            }
+        }
 
         let http_middleware = tower::ServiceBuilder::new()
             .layer(tower_http::cors::CorsLayer::permissive())

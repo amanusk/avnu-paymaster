@@ -6,12 +6,13 @@ repository = { workspace = true }
 
 [dependencies]
 async-trait = { workspace = true }
+clap = { version = "4.4", features = ["derive"] }
 jsonrpsee = { workspace = true, features = ["server", "macros", "client"] }
 paymaster-rpc = { path = "../paymaster-rpc" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["arbitrary_precision", "raw_value"] }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["time", "sync", "macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["time", "sync", "macros", "rt-multi-thread", "signal"] }
 tower = { workspace = true }
 tower-http = { workspace = true, features = ["cors"] }
 tracing = { workspace = true, features = ['attributes'] }
@@ -22,9 +23,17 @@ starknet = { workspace = true }
 jsonrpsee = { workspace = true, features = ["client"] }
 reqwest = { workspace = true, features = ["json"] }
 
+[[bin]]
+name = "auctioneer"
+path = "src/main.rs"
+
 [[example]]
 name = "basic_usage"
 path = "examples/basic_usage.rs"
+
+[[example]]
+name = "config_file_usage"
+path = "examples/config_file_usage.rs"
 
 [dependencies.tracing-subscriber]
 version = "0.3"
