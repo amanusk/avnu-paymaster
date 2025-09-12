@@ -120,6 +120,131 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_build_transaction_rpc_parameter_parsing() {
+        let config = create_test_config();
+        let server = AuctioneerServer::new(config);
+        let ext = Extensions::default();
+
+        // Test with the exact JSON structure from the JavaScript client
+        let user_address = starknet::core::types::Felt::from_hex("0x07e85364e14700da309337e9119be2da250859c0e52f4507a8e924972b469fd6").unwrap();
+        let token_address = starknet::core::types::Felt::from_hex("0x49d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7").unwrap();
+        let selector = starknet::core::types::Felt::from_hex("0x219209e083275171774dab1df80982e9df2096516f06319c5c6d71ae0a8480c").unwrap();
+
+        let build_params = paymaster_rpc::BuildTransactionRequest {
+            transaction: paymaster_rpc::TransactionParameters::Invoke {
+                invoke: paymaster_rpc::InvokeParameters {
+                    user_address,
+                    calls: vec![starknet::core::types::Call {
+                        to: token_address,
+                        selector,
+                        calldata: vec![
+                            user_address,
+                            starknet::core::types::Felt::from_hex("0x1").unwrap(),
+                            starknet::core::types::Felt::from_hex("0x0").unwrap(),
+                        ],
+                    }],
+                },
+            },
+            parameters: paymaster_rpc::ExecutionParameters::V1 {
+                fee_mode: paymaster_rpc::FeeMode::Default { gas_token: token_address },
+                time_bounds: None,
+            },
+        };
+
+        // Test that the parameters are correctly parsed and the method can be called
+        // (even though it will fail due to no active paymasters)
+        let result = server.build_transaction(&ext, build_params).await;
+
+        // Should return error when no paymaster manager is initialized
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(matches!(e, Error::NoActivePaymasters));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_build_transaction_json_deserialization() {
+        // Test that the JSON structure from the JavaScript client can be deserialized
+        let json_str = r#"{
+            "transaction": {
+                "type": "invoke",
+                "invoke": {
+                    "user_address": "0x07e85364e14700da309337e9119be2da250859c0e52f4507a8e924972b469fd6",
+                    "calls": [
+                        {
+                            "to": "0x49d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7",
+                            "selector": "0x219209e083275171774dab1df80982e9df2096516f06319c5c6d71ae0a8480c",
+                            "calldata": [
+                                "0x7e85364e14700da309337e9119be2da250859c0e52f4507a8e924972b469fd6",
+                                "0x1",
+                                "0x0"
+                            ]
+                        }
+                    ]
+                }
+            },
+            "parameters": {
+                "version": "0x1",
+                "fee_mode": {
+                    "mode": "default",
+                    "gas_token": "0x49d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7"
+                }
+            }
+        }"#;
+
+        // Test deserialization
+        let result: Result<paymaster_rpc::BuildTransactionRequest, serde_json::Error> = serde_json::from_str(json_str);
+
+        assert!(result.is_ok(), "Failed to deserialize JSON: {:?}", result.err());
+
+        let request = result.unwrap();
+
+        // Verify the deserialized structure
+        match request.transaction {
+            paymaster_rpc::TransactionParameters::Invoke { invoke } => {
+                assert_eq!(
+                    invoke.user_address,
+                    starknet::core::types::Felt::from_hex("0x07e85364e14700da309337e9119be2da250859c0e52f4507a8e924972b469fd6").unwrap()
+                );
+                assert_eq!(invoke.calls.len(), 1);
+
+                let call = &invoke.calls[0];
+                assert_eq!(
+                    call.to,
+                    starknet::core::types::Felt::from_hex("0x49d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7").unwrap()
+                );
+                assert_eq!(
+                    call.selector,
+                    starknet::core::types::Felt::from_hex("0x219209e083275171774dab1df80982e9df2096516f06319c5c6d71ae0a8480c").unwrap()
+                );
+                assert_eq!(call.calldata.len(), 3);
+                assert_eq!(
+                    call.calldata[0],
+                    starknet::core::types::Felt::from_hex("0x7e85364e14700da309337e9119be2da250859c0e52f4507a8e924972b469fd6").unwrap()
+                );
+                assert_eq!(call.calldata[1], starknet::core::types::Felt::from_hex("0x1").unwrap());
+                assert_eq!(call.calldata[2], starknet::core::types::Felt::from_hex("0x0").unwrap());
+            },
+            _ => panic!("Expected Invoke transaction type"),
+        }
+
+        match request.parameters {
+            paymaster_rpc::ExecutionParameters::V1 { fee_mode, time_bounds } => {
+                match fee_mode {
+                    paymaster_rpc::FeeMode::Default { gas_token } => {
+                        assert_eq!(
+                            gas_token,
+                            starknet::core::types::Felt::from_hex("0x49d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7").unwrap()
+                        );
+                    },
+                    _ => panic!("Expected Default fee mode"),
+                }
+                assert!(time_bounds.is_none());
+            },
+        }
+    }
+
+    #[tokio::test]
     async fn test_all_endpoints_behavior() {
         let config = create_test_config();
         let server = AuctioneerServer::new(config);

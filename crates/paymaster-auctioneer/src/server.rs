@@ -1,7 +1,12 @@
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use hyper::http::Extensions;
 use jsonrpsee::server::middleware::http::ProxyGetRequestLayer;
+use jsonrpsee::server::middleware::rpc::RpcServiceT;
 use jsonrpsee::server::{RpcServiceBuilder, ServerBuilder, ServerHandle};
+use jsonrpsee::types::Request;
+use jsonrpsee::MethodResponse;
+use std::borrow::Cow;
 use std::fs;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -14,6 +19,53 @@ use crate::{
 };
 use starknet::core::types::Felt;
 use std::collections::HashMap;
+
+/// Payload formatter middleware that wraps parameters in array format
+/// This ensures compatibility with both RPC clients and HTTP raw calls
+#[derive(Clone)]
+pub struct PayloadFormatter<S> {
+    service: S,
+}
+
+impl<S> PayloadFormatter<S> {
+    pub fn new(service: S) -> Self {
+        Self { service }
+    }
+
+    fn wrap_parameters<'a>(&self, mut request: Request<'a>) -> Request<'a> {
+        let Some(params) = request.params.clone() else {
+            return request;
+        };
+
+        let payload = params.get();
+        // If the request is already in positional form (i.e array) do nothing
+        if payload.starts_with("[") && payload.ends_with("]") {
+            return request;
+        }
+
+        // Otherwise wrap payload into array
+        let Ok(payload) = serde_json::value::to_raw_value(&vec![params]) else {
+            return request;
+        };
+
+        request.params = Some(Cow::Owned(payload));
+        request
+    }
+}
+
+impl<'a, S> RpcServiceT<'a> for PayloadFormatter<S>
+where
+    S: RpcServiceT<'a> + Send + Sync + Clone + 'static,
+{
+    type Future = BoxFuture<'a, MethodResponse>;
+
+    fn call(&self, request: Request<'a>) -> Self::Future {
+        let service = self.service.clone();
+        let request = self.wrap_parameters(request);
+
+        Box::pin(async move { service.call(request).await })
+    }
+}
 
 pub struct AuctioneerServer {
     pub config: AuctioneerConfig,
@@ -79,7 +131,7 @@ impl AuctioneerServer {
             .layer(tower_http::cors::CorsLayer::permissive())
             .layer(ProxyGetRequestLayer::new("/health", "paymaster_health").unwrap());
 
-        let rpc_middleware = RpcServiceBuilder::new();
+        let rpc_middleware = RpcServiceBuilder::new().layer_fn(PayloadFormatter::new);
 
         let server = ServerBuilder::default()
             .max_connections(1024)
