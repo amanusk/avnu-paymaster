@@ -3,17 +3,24 @@ use hyper::http::Extensions;
 use jsonrpsee::server::middleware::http::ProxyGetRequestLayer;
 use jsonrpsee::server::{RpcServiceBuilder, ServerBuilder, ServerHandle};
 use std::fs;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{info, instrument};
 
+use crate::paymaster_manager::PaymasterManager;
 use crate::{AuctioneerAPIServer, AuctioneerConfig, BuildTransactionRequest, BuildTransactionResponse, Error, ExecuteRequest, ExecuteResponse, TokenPrice};
 
 pub struct AuctioneerServer {
     pub config: AuctioneerConfig,
+    pub paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>,
 }
 
 impl AuctioneerServer {
     pub fn new(config: AuctioneerConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            paymaster_manager: Arc::new(RwLock::new(None)),
+        }
     }
 
     /// Load configuration from a JSON file
@@ -40,6 +47,25 @@ impl AuctioneerServer {
             }
         }
 
+        // Initialize the paymaster manager
+        info!("Initializing paymaster manager...");
+        let paymaster_manager = PaymasterManager::new(self.config.clone());
+        paymaster_manager.initialize().await?;
+
+        // Store the manager in the server
+        {
+            let mut manager = self.paymaster_manager.write().await;
+            *manager = Some(paymaster_manager);
+        }
+
+        // Start the heartbeat monitoring in the background
+        let manager_arc = self.paymaster_manager.clone();
+        tokio::spawn(async move {
+            if let Some(manager) = manager_arc.read().await.as_ref() {
+                manager.start_heartbeat().await;
+            }
+        });
+
         let http_middleware = tower::ServiceBuilder::new()
             .layer(tower_http::cors::CorsLayer::permissive())
             .layer(ProxyGetRequestLayer::new("/health", "paymaster_health").unwrap());
@@ -62,12 +88,24 @@ impl AuctioneerServer {
 impl AuctioneerAPIServer for AuctioneerServer {
     #[instrument(name = "paymaster_health", skip(self))]
     async fn health(&self, _: &Extensions) -> Result<bool, Error> {
-        Err(Error::NotYetImplemented)
+        let manager = self.paymaster_manager.read().await;
+        if let Some(manager) = manager.as_ref() {
+            let active_count = manager.count_active_paymasters().await;
+            Ok(active_count > 0)
+        } else {
+            Ok(false)
+        }
     }
 
     #[instrument(name = "paymaster_isAvailable", skip(self, _ext))]
     async fn is_available(&self, _ext: &Extensions) -> Result<bool, Error> {
-        Err(Error::NotYetImplemented)
+        let manager = self.paymaster_manager.read().await;
+        if let Some(manager) = manager.as_ref() {
+            let active_count = manager.count_active_paymasters().await;
+            Ok(active_count > 0)
+        } else {
+            Ok(false)
+        }
     }
 
     #[instrument(name = "paymaster_buildTransaction", skip(self, _ext, _params))]
@@ -82,6 +120,12 @@ impl AuctioneerAPIServer for AuctioneerServer {
 
     #[instrument(name = "paymaster_getSupportedTokens", skip(self, _ext))]
     async fn get_supported_tokens(&self, _ext: &Extensions) -> Result<Vec<TokenPrice>, Error> {
-        Err(Error::NotYetImplemented)
+        let manager = self.paymaster_manager.read().await;
+        if let Some(manager) = manager.as_ref() {
+            let tokens = manager.get_all_supported_tokens().await;
+            Ok(tokens)
+        } else {
+            Ok(Vec::new())
+        }
     }
 }
