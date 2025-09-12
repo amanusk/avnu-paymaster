@@ -68,6 +68,7 @@ impl<'a> From<Error> for ErrorObject<'a> {
     }
 }
 
+pub mod paymaster_manager;
 pub mod server;
 
 #[cfg(test)]

@@ -1,27 +1,42 @@
 # Paymaster Auctioneer
 
-A new crate that implements the same RPC endpoints as the regular paymaster service, designed to be implemented as an auctioneer that doesn't require any new endpoints on the paymaster side.
+A comprehensive auctioneer implementation that manages multiple paymasters, providing high availability and automatic failover capabilities. The auctioneer implements the same RPC endpoints as the regular paymaster service while orchestrating multiple paymaster instances.
 
 ## Overview
 
-The `paymaster-auctioneer` crate provides a clean implementation of the paymaster RPC API that can be extended to implement auctioneer functionality. Currently, all endpoints return "not yet implemented" errors, providing a solid foundation for future development.
+The `paymaster-auctioneer` crate provides a complete implementation of the paymaster RPC API with advanced paymaster management capabilities. It automatically discovers, monitors, and manages multiple paymaster instances, ensuring high availability and proper token support discovery.
 
 ## Features
 
 - **Complete RPC API**: Implements all 5 paymaster RPC endpoints
-- **Same Interface**: Uses the same types and method signatures as the regular paymaster
-- **Test Coverage**: Comprehensive tests verify all endpoints exist and return expected errors
-- **Clean Architecture**: Ready for auctioneer-specific implementation
+- **Paymaster Management**: Automatic discovery and monitoring of multiple paymasters
+- **High Availability**: Automatic failover and recovery of unresponsive paymasters
+- **Token Discovery**: Automatic querying and caching of supported tokens
+- **Heartbeat Monitoring**: Continuous health checking with configurable intervals
+- **State Management**: Comprehensive state tracking (Active, Unresponsive, Removed)
+- **Error Handling**: Robust error handling with timeouts and retry logic
+- **Logging**: Detailed logging for monitoring and debugging
+
+## Startup Procedure
+
+The auctioneer follows a comprehensive startup procedure:
+
+1. **Initialization**: Checks `is_available` for all enabled paymasters
+2. **Token Discovery**: Queries `get_supported_tokens` for each available paymaster
+3. **State Management**: Creates a map of currently available paymasters
+4. **Heartbeat Loop**: Continuously monitors paymaster availability
+5. **Cleanup**: Removes unresponsive paymasters after configurable timeout
+6. **Recovery**: Attempts to reactivate removed paymasters after retry interval
 
 ## Endpoints
 
 The auctioneer implements the following RPC endpoints:
 
-1. `paymaster_health` - Health check endpoint
-2. `paymaster_isAvailable` - Service availability check
-3. `paymaster_buildTransaction` - Build transaction with paymaster sponsorship
-4. `paymaster_executeTransaction` - Execute transaction with paymaster sponsorship
-5. `paymaster_getSupportedTokens` - Get list of supported tokens
+1. `paymaster_health` - Returns true if at least one paymaster is active
+2. `paymaster_isAvailable` - Returns true if at least one paymaster is active
+3. `paymaster_buildTransaction` - Build transaction with paymaster sponsorship (not yet implemented)
+4. `paymaster_executeTransaction` - Execute transaction with paymaster sponsorship (not yet implemented)
+5. `paymaster_getSupportedTokens` - Returns aggregated supported tokens from all active paymasters
 
 ## Usage
 
@@ -45,10 +60,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 ```
 
-### Running the Example
+### Running the Examples
 
 ```bash
+# Basic usage example
 cargo run -p paymaster-auctioneer --example basic_usage
+
+# Startup procedure demonstration
+cargo run -p paymaster-auctioneer --example startup_procedure_test
 ```
 
 ## Testing
@@ -62,8 +81,14 @@ cargo test -p paymaster-auctioneer
 The tests verify that:
 
 - All 5 endpoints exist and are callable
-- All endpoints return the expected "not yet implemented" error
-- The error handling works correctly
+- Paymaster management functionality works correctly
+- State transitions are handled properly
+
+## Documentation
+
+For detailed information about the startup procedure and implementation:
+
+- [Startup Procedure Documentation](STARTUP_PROCEDURE.md) - Complete guide to the auctioneer startup and monitoring process
 
 ## Architecture
 
