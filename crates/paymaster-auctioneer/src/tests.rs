@@ -43,7 +43,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_build_transaction_endpoint_returns_not_implemented() {
+    async fn test_build_transaction_endpoint_returns_no_active_paymasters() {
         let config = create_test_config();
         let server = AuctioneerServer::new(config);
         let params = paymaster_rpc::BuildTransactionRequest {
@@ -64,9 +64,10 @@ mod tests {
 
         let result = server.build_transaction(&Extensions::default(), params).await;
 
+        // Should return error when no paymaster manager is initialized
         assert!(result.is_err());
         if let Err(e) = result {
-            assert!(matches!(e, Error::NotYetImplemented));
+            assert!(matches!(e, Error::NoActivePaymasters));
         }
     }
 
@@ -134,7 +135,7 @@ mod tests {
         assert!(available_result.is_ok());
         assert_eq!(available_result.unwrap(), false);
 
-        // Test build_transaction endpoint
+        // Test build_transaction endpoint - should return error when no paymaster manager is initialized
         let build_params = paymaster_rpc::BuildTransactionRequest {
             transaction: paymaster_rpc::TransactionParameters::Invoke {
                 invoke: paymaster_rpc::InvokeParameters {
@@ -153,7 +154,7 @@ mod tests {
         let build_result = server.build_transaction(&ext, build_params).await;
         assert!(build_result.is_err());
         if let Err(e) = build_result {
-            assert!(matches!(e, Error::NotYetImplemented));
+            assert!(matches!(e, Error::NoActivePaymasters));
         }
 
         // Test execute_transaction endpoint
