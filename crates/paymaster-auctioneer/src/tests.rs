@@ -22,29 +22,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_health_endpoint_returns_false_when_no_paymasters() {
+    async fn test_health_endpoint_returns_service_not_available_when_no_paymasters() {
         let config = create_test_config();
         let server = AuctioneerServer::new(config);
         let result = server.health(&Extensions::default()).await;
 
-        // Should return false when no paymaster manager is initialized
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), false);
+        // Should return ServiceNotAvailable error when no paymaster manager is initialized
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::ServiceNotAvailable));
     }
 
     #[tokio::test]
-    async fn test_is_available_endpoint_returns_false_when_no_paymasters() {
+    async fn test_is_available_endpoint_returns_service_not_available_when_no_paymasters() {
         let config = create_test_config();
         let server = AuctioneerServer::new(config);
         let result = server.is_available(&Extensions::default()).await;
 
-        // Should return false when no paymaster manager is initialized
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), false);
+        // Should return ServiceNotAvailable error when no paymaster manager is initialized
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::ServiceNotAvailable));
     }
 
     #[tokio::test]
-    async fn test_build_transaction_endpoint_returns_no_active_paymasters() {
+    async fn test_build_transaction_endpoint_returns_service_not_available_when_no_paymasters() {
         let config = create_test_config();
         let server = AuctioneerServer::new(config);
         let params = paymaster_rpc::BuildTransactionRequest {
@@ -65,10 +65,10 @@ mod tests {
 
         let result = server.build_transaction(&Extensions::default(), params).await;
 
-        // Should return error when no paymaster manager is initialized
+        // Should return ServiceNotAvailable error when no paymaster manager is initialized
         assert!(result.is_err());
         if let Err(e) = result {
-            assert!(matches!(e, Error::NoActivePaymasters));
+            assert!(matches!(e, Error::ServiceNotAvailable));
         }
     }
 
@@ -110,14 +110,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_supported_tokens_endpoint_returns_empty_when_no_paymasters() {
+    async fn test_get_supported_tokens_endpoint_returns_service_not_available_when_no_paymasters() {
         let config = create_test_config();
         let server = AuctioneerServer::new(config);
         let result = server.get_supported_tokens(&Extensions::default()).await;
 
-        // Should return empty vector when no paymaster manager is initialized
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
+        // Should return ServiceNotAvailable error when no paymaster manager is initialized
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::ServiceNotAvailable));
     }
 
     #[tokio::test]
@@ -156,10 +156,10 @@ mod tests {
         // (even though it will fail due to no active paymasters)
         let result = server.build_transaction(&ext, build_params).await;
 
-        // Should return error when no paymaster manager is initialized
+        // Should return ServiceNotAvailable error when no paymaster manager is initialized
         assert!(result.is_err());
         if let Err(e) = result {
-            assert!(matches!(e, Error::NoActivePaymasters));
+            assert!(matches!(e, Error::ServiceNotAvailable));
         }
     }
 
@@ -251,15 +251,15 @@ mod tests {
         let server = AuctioneerServer::new(config);
         let ext = Extensions::default();
 
-        // Test health endpoint - should return false when no paymaster manager
+        // Test health endpoint - should return ServiceNotAvailable when no paymaster manager
         let health_result = server.health(&ext).await;
-        assert!(health_result.is_ok());
-        assert_eq!(health_result.unwrap(), false);
+        assert!(health_result.is_err());
+        assert!(matches!(health_result.unwrap_err(), Error::ServiceNotAvailable));
 
-        // Test is_available endpoint - should return false when no paymaster manager
+        // Test is_available endpoint - should return ServiceNotAvailable when no paymaster manager
         let available_result = server.is_available(&ext).await;
-        assert!(available_result.is_ok());
-        assert_eq!(available_result.unwrap(), false);
+        assert!(available_result.is_err());
+        assert!(matches!(available_result.unwrap_err(), Error::ServiceNotAvailable));
 
         // Test build_transaction endpoint - should return error when no paymaster manager is initialized
         let build_params = paymaster_rpc::BuildTransactionRequest {
@@ -280,7 +280,7 @@ mod tests {
         let build_result = server.build_transaction(&ext, build_params).await;
         assert!(build_result.is_err());
         if let Err(e) = build_result {
-            assert!(matches!(e, Error::NoActivePaymasters));
+            assert!(matches!(e, Error::ServiceNotAvailable));
         }
 
         // Test execute_transaction endpoint
@@ -309,10 +309,10 @@ mod tests {
             assert!(matches!(e, Error::NotYetImplemented));
         }
 
-        // Test get_supported_tokens endpoint - should return empty vector when no paymaster manager
+        // Test get_supported_tokens endpoint - should return ServiceNotAvailable when no paymaster manager
         let tokens_result = server.get_supported_tokens(&ext).await;
-        assert!(tokens_result.is_ok());
-        assert!(tokens_result.unwrap().is_empty());
+        assert!(tokens_result.is_err());
+        assert!(matches!(tokens_result.unwrap_err(), Error::ServiceNotAvailable));
     }
 
     #[tokio::test]
