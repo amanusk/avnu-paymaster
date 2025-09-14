@@ -4,7 +4,7 @@ use paymaster_starknet::values::decoding::TypedValueDecoder;
 use starknet::core::types::Felt;
 use std::time::Duration;
 use tokio::time::timeout;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Handles auction logic for selecting the best paymaster bid
 pub struct AuctionManager {
@@ -57,6 +57,7 @@ impl AuctionManager {
             if let Ok(Some((name, response))) = task.await {
                 match self.extract_gas_token_info(&response) {
                     Ok((gas_token, amount)) => {
+                        info!("Received valid bid from paymaster {}: gas_token={}, amount={}", name, gas_token, amount);
                         bids.push(PaymasterBid {
                             paymaster_name: name,
                             response,

@@ -93,6 +93,8 @@ pub enum Error {
     PaymasterRequestFailed(String),
     #[error("no auction found for the provided transaction")]
     NoAuctionFound,
+    #[error("token not supported")]
+    TokenNotSupported,
 }
 
 impl<'a> From<Error> for ErrorObject<'a> {
@@ -105,6 +107,7 @@ impl<'a> From<Error> for ErrorObject<'a> {
             Error::NoValidBids => ErrorObject::owned(1004, "No valid bids", Some(value.to_string())),
             Error::PaymasterRequestFailed(msg) => ErrorObject::owned(1005, "Paymaster request failed", Some(msg)),
             Error::NoAuctionFound => ErrorObject::owned(1006, "No auction found", Some(value.to_string())),
+            Error::TokenNotSupported => ErrorObject::borrowed(151, "An error occurred (TOKEN_NOT_SUPPORTED)", None),
         }
     }
 }
