@@ -245,10 +245,69 @@ impl AuctioneerAPIServer for AuctioneerServer {
         Ok(auction_result.response)
     }
 
-    #[instrument(name = "paymaster_executeTransaction", skip(self, _ext, _params))]
-    async fn execute_transaction(&self, _ext: &Extensions, _params: ExecuteRequest) -> Result<ExecuteResponse, Error> {
-        info!("Execute transaction endpoint invoked (not yet implemented)");
-        Err(Error::NotYetImplemented)
+    #[instrument(name = "paymaster_executeTransaction", skip(self, _ext, params))]
+    async fn execute_transaction(&self, _ext: &Extensions, params: ExecuteRequest) -> Result<ExecuteResponse, Error> {
+        info!("Execute transaction endpoint invoked");
+
+        // Extract the typed data from the request
+        let typed_data = match &params.transaction {
+            paymaster_rpc::ExecutableTransactionParameters::Invoke { invoke } => &invoke.typed_data,
+            paymaster_rpc::ExecutableTransactionParameters::DeployAndInvoke { invoke, .. } => &invoke.typed_data,
+            paymaster_rpc::ExecutableTransactionParameters::Deploy { .. } => {
+                info!("Deploy transactions not supported for execution");
+                return Err(Error::NotYetImplemented);
+            },
+        };
+
+        // Generate auction ID from the typed data (without signature)
+        let auction_id = self.auction_manager.generate_auction_id_from_typed_data(typed_data)?;
+        info!("Generated auction ID from typed data: {}", auction_id);
+
+        // Check if the auction exists
+        let auction_result = {
+            let results = self.auction_results.read().await;
+            results.get(&auction_id).cloned()
+        };
+
+        let auction_result = match auction_result {
+            Some(result) => {
+                info!("Found auction result for ID: {}, winner: {}", auction_id, result.winning_paymaster);
+                result
+            },
+            None => {
+                info!("No auction found for ID: {}", auction_id);
+                return Err(Error::NoAuctionFound);
+            },
+        };
+
+        // Get the winning paymaster's URL
+        let manager = self.paymaster_manager.read().await;
+        let paymaster_manager = manager.as_ref().ok_or(Error::NoActivePaymasters)?;
+        let winning_paymaster_info = paymaster_manager
+            .get_paymaster(&auction_result.winning_paymaster)
+            .await
+            .ok_or_else(|| Error::PaymasterRequestFailed(format!("Winning paymaster {} not found", auction_result.winning_paymaster)))?;
+
+        info!(
+            "Forwarding execute request to winning paymaster: {} at {}",
+            auction_result.winning_paymaster, winning_paymaster_info.config.url
+        );
+
+        // Create a client for the winning paymaster
+        let client = paymaster_rpc::client::Client::new(&winning_paymaster_info.config.url);
+
+        // Forward the execute request to the winning paymaster
+        let response = client
+            .execute_transaction(params)
+            .await
+            .map_err(|e| Error::PaymasterRequestFailed(format!("Failed to execute transaction with winning paymaster: {}", e)))?;
+
+        info!(
+            "Successfully executed transaction with paymaster: {}, tx_hash: {}, tracking_id: {}",
+            auction_result.winning_paymaster, response.transaction_hash, response.tracking_id
+        );
+
+        Ok(response)
     }
 
     #[instrument(name = "paymaster_getSupportedTokens", skip(self, _ext))]

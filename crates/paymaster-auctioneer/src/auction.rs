@@ -171,14 +171,21 @@ impl AuctionManager {
     }
 
     /// Generate auction ID from TypedData hash (without signature)
+    /// This function handles both signed and unsigned TypedData by removing the signature field if present
     /// This matches the logic from the reference implementation
-    fn generate_auction_id_from_typed_data(&self, typed_data: &starknet::core::types::TypedData) -> Result<Felt, Error> {
+    pub fn generate_auction_id_from_typed_data(&self, typed_data: &starknet::core::types::TypedData) -> Result<Felt, Error> {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
-        // Serialize the TypedData to JSON and then hash it
-        let typed_data_json = serde_json::to_value(typed_data).map_err(|_| Error::FailedToCreateAuctionId)?;
+        // Convert TypedData to JSON
+        let mut typed_data_json = serde_json::to_value(typed_data).map_err(|_| Error::FailedToCreateAuctionId)?;
 
+        // Remove the signature field if it exists (for signed TypedData)
+        if let Some(obj) = typed_data_json.as_object_mut() {
+            obj.remove("signature");
+        }
+
+        // Hash the TypedData without signature
         let mut hasher = DefaultHasher::new();
         typed_data_json.hash(&mut hasher);
         let hash_value = hasher.finish();
@@ -199,7 +206,7 @@ impl Default for AuctionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use paymaster_rpc::{DeployTransaction, DeploymentParameters, ExecutionParameters, FeeEstimate, FeeMode, InvokeTransaction};
+    use paymaster_rpc::{DeployTransaction, DeploymentParameters, ExecutionParameters, FeeEstimate, FeeMode};
     use starknet::core::types::Felt;
 
     #[test]
@@ -660,6 +667,167 @@ mod tests {
         assert!(auction_id_with_sig != Felt::ZERO, "Auction ID should not be zero");
 
         println!("✅ Auction ID signature independence test passed!");
+        println!(
+            "   - Same TypedData produces consistent auction ID: {}",
+            auction_id_without_sig == auction_id_consistency
+        );
+        println!("   - Signature presence doesn't affect auction ID: {}", auction_id_without_sig == auction_id_with_sig);
+        println!(
+            "   - Different content produces different auction ID: {}",
+            auction_id_without_sig != different_auction_id
+        );
+    }
+
+    #[test]
+    fn test_single_function_signature_independence() {
+        use starknet::core::types::TypedData;
+
+        let manager = AuctionManager::new();
+
+        // Create a base TypedData without signature
+        let base_json = serde_json::json!({
+            "types": {
+                "StarknetDomain": [
+                    {"name": "name", "type": "shortstring"},
+                    {"name": "version", "type": "shortstring"},
+                    {"name": "chainId", "type": "shortstring"},
+                    {"name": "revision", "type": "shortstring"}
+                ],
+                "OutsideExecution": [
+                    {"name": "Caller", "type": "ContractAddress"},
+                    {"name": "Nonce", "type": "felt"},
+                    {"name": "Execute After", "type": "u128"},
+                    {"name": "Execute Before", "type": "u128"},
+                    {"name": "Calls", "type": "Call*"}
+                ],
+                "Call": [
+                    {"name": "To", "type": "ContractAddress"},
+                    {"name": "Selector", "type": "selector"},
+                    {"name": "Calldata", "type": "felt*"}
+                ]
+            },
+            "primaryType": "OutsideExecution",
+            "domain": {
+                "name": "Account.execute_from_outside",
+                "version": "2",
+                "chainId": "SN_SEPOLIA",
+                "revision": "1"
+            },
+            "message": {
+                "Caller": "0x0",
+                "Nonce": "0x1234567890abcdef",
+                "Execute After": "0x1234567890",
+                "Execute Before": "0x1234567890abcdef",
+                "Calls": [
+                    {
+                        "To": "0x1234567890abcdef1234567890abcdef12345678",
+                        "Selector": "0x1234567890abcdef1234567890abcdef12345678",
+                        "Calldata": ["0x1", "0x2", "0x3"]
+                    }
+                ]
+            }
+        });
+
+        // Convert to TypedData without signature
+        let typed_data_without_sig: TypedData = serde_json::from_value(base_json.clone()).unwrap();
+
+        // Generate auction ID from TypedData without signature using the single function
+        let auction_id_without_sig = manager.generate_auction_id_from_typed_data(&typed_data_without_sig).unwrap();
+
+        println!("Auction ID without signature (single function): {}", auction_id_without_sig);
+
+        // Create TypedData with signature by adding signature field to JSON
+        let mut json_with_sig = base_json.clone();
+        if let Some(typed_data_obj) = json_with_sig.as_object_mut() {
+            typed_data_obj.insert(
+                "signature".to_string(),
+                serde_json::json!([
+                    "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+                    "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+                ]),
+            );
+        }
+
+        // Convert to TypedData with signature
+        let typed_data_with_sig: TypedData = serde_json::from_value(json_with_sig).unwrap();
+
+        // Generate auction ID from TypedData with signature using the single function
+        let auction_id_with_sig = manager.generate_auction_id_from_typed_data(&typed_data_with_sig).unwrap();
+
+        println!("Auction ID with signature (single function): {}", auction_id_with_sig);
+
+        // Test 1: Signature independence - TypedData with and without signature should produce same auction ID
+        assert_eq!(
+            auction_id_without_sig, auction_id_with_sig,
+            "Single function should produce the same auction ID whether TypedData has signature or not"
+        );
+
+        // Test 2: Consistency - same TypedData should produce same auction ID
+        let auction_id_consistency = manager.generate_auction_id_from_typed_data(&typed_data_without_sig).unwrap();
+        assert_eq!(
+            auction_id_without_sig, auction_id_consistency,
+            "Single function should produce consistent auction ID for the same TypedData"
+        );
+
+        // Test 3: Different content should produce different auction IDs
+        let different_json = serde_json::json!({
+            "types": {
+                "StarknetDomain": [
+                    {"name": "name", "type": "shortstring"},
+                    {"name": "version", "type": "shortstring"},
+                    {"name": "chainId", "type": "shortstring"},
+                    {"name": "revision", "type": "shortstring"}
+                ],
+                "OutsideExecution": [
+                    {"name": "Caller", "type": "ContractAddress"},
+                    {"name": "Nonce", "type": "felt"},
+                    {"name": "Execute After", "type": "u128"},
+                    {"name": "Execute Before", "type": "u128"},
+                    {"name": "Calls", "type": "Call*"}
+                ],
+                "Call": [
+                    {"name": "To", "type": "ContractAddress"},
+                    {"name": "Selector", "type": "selector"},
+                    {"name": "Calldata", "type": "felt*"}
+                ]
+            },
+            "primaryType": "OutsideExecution",
+            "domain": {
+                "name": "Account.execute_from_outside",
+                "version": "2",
+                "chainId": "SN_SEPOLIA",
+                "revision": "1"
+            },
+            "message": {
+                "Caller": "0x0",
+                "Nonce": "0x9876543210fedcba", // Different nonce
+                "Execute After": "0x1234567890",
+                "Execute Before": "0x1234567890abcdef",
+                "Calls": [
+                    {
+                        "To": "0x1234567890abcdef1234567890abcdef12345678",
+                        "Selector": "0x1234567890abcdef1234567890abcdef12345678",
+                        "Calldata": ["0x1", "0x2", "0x3"]
+                    }
+                ]
+            }
+        });
+
+        let different_typed_data: TypedData = serde_json::from_value(different_json).unwrap();
+        let different_auction_id = manager.generate_auction_id_from_typed_data(&different_typed_data).unwrap();
+
+        println!("Different auction ID: {}", different_auction_id);
+
+        assert_ne!(
+            auction_id_without_sig, different_auction_id,
+            "Single function should produce different auction ID for different TypedData content"
+        );
+
+        // Test 4: Verify the auction ID format
+        assert!(auction_id_without_sig != Felt::ZERO, "Auction ID should not be zero");
+        assert!(auction_id_with_sig != Felt::ZERO, "Auction ID should not be zero");
+
+        println!("✅ Single function signature independence test passed!");
         println!(
             "   - Same TypedData produces consistent auction ID: {}",
             auction_id_without_sig == auction_id_consistency
