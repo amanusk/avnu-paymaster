@@ -235,10 +235,13 @@ impl AuctioneerAPIServer for AuctioneerServer {
         if let Some(manager) = manager.as_ref() {
             let active_count = manager.count_active_paymasters().await;
             info!("Health check: {} active paymasters", active_count);
-            Ok(active_count > 0)
+            if active_count == 0 {
+                return Err(Error::ServiceNotAvailable);
+            }
+            Ok(true)
         } else {
             info!("Health check: No paymaster manager available");
-            Ok(false)
+            Err(Error::ServiceNotAvailable)
         }
     }
 
@@ -249,10 +252,13 @@ impl AuctioneerAPIServer for AuctioneerServer {
         if let Some(manager) = manager.as_ref() {
             let active_count = manager.count_active_paymasters().await;
             info!("Is available check: {} active paymasters", active_count);
-            Ok(active_count > 0)
+            if active_count == 0 {
+                return Err(Error::ServiceNotAvailable);
+            }
+            Ok(true)
         } else {
             info!("Is available check: No paymaster manager available");
-            Ok(false)
+            Err(Error::ServiceNotAvailable)
         }
     }
 
@@ -281,14 +287,14 @@ impl AuctioneerAPIServer for AuctioneerServer {
 
         // Get active paymasters
         let manager = self.paymaster_manager.read().await;
-        let paymaster_manager = manager.as_ref().ok_or(Error::NoActivePaymasters)?;
+        let paymaster_manager = manager.as_ref().ok_or(Error::ServiceNotAvailable)?;
         let active_paymasters = paymaster_manager.get_active_paymasters().await;
 
         info!("Found {} active paymasters for auction", active_paymasters.len());
 
         if active_paymasters.is_empty() {
             info!("No active paymasters available, returning error");
-            return Err(Error::NoActivePaymasters);
+            return Err(Error::ServiceNotAvailable);
         }
 
         // Only process non-sponsored transactions
@@ -371,7 +377,7 @@ impl AuctioneerAPIServer for AuctioneerServer {
 
         // Get the winning paymaster's URL
         let manager = self.paymaster_manager.read().await;
-        let paymaster_manager = manager.as_ref().ok_or(Error::NoActivePaymasters)?;
+        let paymaster_manager = manager.as_ref().ok_or(Error::ServiceNotAvailable)?;
         let winning_paymaster_info = paymaster_manager
             .get_paymaster(&auction_result.winning_paymaster)
             .await
@@ -412,12 +418,17 @@ impl AuctioneerAPIServer for AuctioneerServer {
         info!("Get supported tokens endpoint invoked");
         let manager = self.paymaster_manager.read().await;
         if let Some(manager) = manager.as_ref() {
+            let active_count = manager.count_active_paymasters().await;
+            if active_count == 0 {
+                info!("No active paymasters available, returning error");
+                return Err(Error::ServiceNotAvailable);
+            }
             let tokens = manager.get_all_supported_tokens().await;
             info!("Retrieved {} unique supported tokens (deduplicated by token address)", tokens.len());
             Ok(tokens)
         } else {
-            info!("No paymaster manager available, returning empty token list");
-            Ok(Vec::new())
+            info!("No paymaster manager available, returning error");
+            Err(Error::ServiceNotAvailable)
         }
     }
 }
