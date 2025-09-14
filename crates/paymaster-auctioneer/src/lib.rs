@@ -88,6 +88,8 @@ pub enum Error {
     NoValidBids,
     #[error("paymaster request failed: {0}")]
     PaymasterRequestFailed(String),
+    #[error("no auction found for the provided transaction")]
+    NoAuctionFound,
 }
 
 impl<'a> From<Error> for ErrorObject<'a> {
@@ -99,6 +101,7 @@ impl<'a> From<Error> for ErrorObject<'a> {
             Error::FailedToCreateAuctionId => ErrorObject::owned(1003, "Failed to create auction ID", Some(value.to_string())),
             Error::NoValidBids => ErrorObject::owned(1004, "No valid bids", Some(value.to_string())),
             Error::PaymasterRequestFailed(msg) => ErrorObject::owned(1005, "Paymaster request failed", Some(msg)),
+            Error::NoAuctionFound => ErrorObject::owned(1006, "No auction found", Some(value.to_string())),
         }
     }
 }

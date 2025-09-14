@@ -313,4 +313,71 @@ mod tests {
         assert!(tokens_result.is_ok());
         assert!(tokens_result.unwrap().is_empty());
     }
+
+    #[tokio::test]
+    async fn test_execute_transaction_no_auction_found() {
+        use starknet::core::types::{Felt, TypedData};
+
+        let config = AuctioneerConfig {
+            auction_timeout_ms: 5000,
+            heartbeat_interval_ms: 10000,
+            cleanup_interval_ms: 30000,
+            chain_id: "SN_SEPOLIA".to_string(),
+            port: 8080,
+            log_level: "info".to_string(),
+            paymasters: vec![],
+        };
+
+        let server = AuctioneerServer::new(config);
+        let ext = Extensions::default();
+
+        // Create a simple TypedData using JSON deserialization
+        let test_json = serde_json::json!({
+            "types": {
+                "StarknetDomain": [
+                    {"name": "name", "type": "shortstring"},
+                    {"name": "version", "type": "shortstring"},
+                    {"name": "chainId", "type": "shortstring"},
+                    {"name": "revision", "type": "shortstring"}
+                ],
+                "TestMessage": [
+                    {"name": "test", "type": "felt"}
+                ]
+            },
+            "primaryType": "TestMessage",
+            "domain": {
+                "name": "Test",
+                "version": "1",
+                "chainId": "SN_SEPOLIA",
+                "revision": "1"
+            },
+            "message": {
+                "test": "0x123"
+            }
+        });
+
+        let typed_data: TypedData = serde_json::from_value(test_json).unwrap();
+
+        // Test execute_transaction with Invoke transaction - should return no auction found
+        let execute_params = paymaster_rpc::ExecuteRequest {
+            transaction: paymaster_rpc::ExecutableTransactionParameters::Invoke {
+                invoke: paymaster_rpc::ExecutableInvokeParameters {
+                    user_address: Felt::from_hex("0x123").unwrap(),
+                    typed_data,
+                    signature: vec![],
+                },
+            },
+            parameters: paymaster_rpc::ExecutionParameters::V1 {
+                fee_mode: paymaster_rpc::FeeMode::Default {
+                    gas_token: Felt::from_hex("0x789").unwrap(),
+                },
+                time_bounds: None,
+            },
+        };
+        let execute_result = server.execute_transaction(&ext, execute_params).await;
+        assert!(execute_result.is_err());
+        if let Err(e) = execute_result {
+            assert!(matches!(e, Error::NoAuctionFound));
+        }
+    }
 }
