@@ -176,6 +176,14 @@ impl AuctioneerServer {
             }
         });
 
+        // Start the supported tokens refresh task in the background
+        let manager_arc = self.paymaster_manager.clone();
+        tokio::spawn(async move {
+            if let Some(manager) = manager_arc.read().await.as_ref() {
+                manager.start_token_refresh_task().await;
+            }
+        });
+
         // Start the auction clearing task
         self.start_auction_clearing_task().await;
 

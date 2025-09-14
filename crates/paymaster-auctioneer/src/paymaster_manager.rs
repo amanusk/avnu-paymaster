@@ -50,10 +50,14 @@ pub struct PaymasterManager {
 
 impl PaymasterManager {
     pub fn new(config: AuctioneerConfig) -> Self {
+        // Use retry_interval_ms from config, defaulting to 10 minutes (600000 ms) if not specified
+        let retry_interval_ms = config.retry_interval_ms.unwrap_or(600_000);
+        let retry_interval = Duration::from_millis(retry_interval_ms);
+
         Self {
             paymasters: Arc::new(RwLock::new(HashMap::new())),
             config,
-            retry_interval: Duration::from_secs(600), // 10 minutes default
+            retry_interval,
         }
     }
 
@@ -271,5 +275,43 @@ impl PaymasterManager {
 
         // Convert the HashMap values back to a Vec
         token_map.into_values().collect()
+    }
+
+    /// Start the supported tokens refresh task that runs every retry_interval
+    pub async fn start_token_refresh_task(&self) {
+        info!("Starting supported tokens refresh task with interval: {:?}", self.retry_interval);
+
+        loop {
+            sleep(self.retry_interval).await;
+
+            debug!("Running supported tokens refresh check...");
+
+            let mut paymasters = self.paymasters.write().await;
+            let mut updated_count = 0;
+
+            for (name, paymaster_info) in paymasters.iter_mut() {
+                if paymaster_info.state == PaymasterState::Active {
+                    match self.fetch_supported_tokens(paymaster_info).await {
+                        Ok(tokens) => {
+                            let old_count = paymaster_info.supported_tokens.len();
+                            paymaster_info.supported_tokens = tokens;
+                            let new_count = paymaster_info.supported_tokens.len();
+
+                            if old_count != new_count {
+                                info!("Paymaster {} token count changed: {} -> {}", name, old_count, new_count);
+                            } else {
+                                debug!("Paymaster {} token list refreshed ({} tokens)", name, new_count);
+                            }
+                            updated_count += 1;
+                        },
+                        Err(e) => {
+                            warn!("Failed to refresh supported tokens for {}: {}", name, e);
+                        },
+                    }
+                }
+            }
+
+            info!("Supported tokens refresh completed for {} active paymasters", updated_count);
+        }
     }
 }

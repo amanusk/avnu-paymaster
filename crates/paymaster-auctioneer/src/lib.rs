@@ -27,6 +27,8 @@ pub struct AuctioneerConfig {
     pub heartbeat_interval_ms: u64,
     /// Time after which a non-responsive paymaster is removed in milliseconds
     pub cleanup_interval_ms: u64,
+    /// Time to wait before retrying to reactivate a removed paymaster in milliseconds (default: 600000 = 10 minutes)
+    pub retry_interval_ms: Option<u64>,
     /// Starknet chain ID
     pub chain_id: String,
     /// Port to run the server on
