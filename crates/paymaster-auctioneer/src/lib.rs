@@ -63,6 +63,7 @@ pub struct AuctionResult {
     pub gas_token: Felt,
     pub amount: Felt,
     pub response: BuildTransactionResponse,
+    pub created_at: std::time::SystemTime,
 }
 
 /// Represents a bid from a paymaster

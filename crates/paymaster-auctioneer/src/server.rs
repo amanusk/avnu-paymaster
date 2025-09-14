@@ -9,7 +9,9 @@ use jsonrpsee::MethodResponse;
 use std::borrow::Cow;
 use std::fs;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
+use tokio::time::interval;
 use tracing::{info, instrument};
 
 use crate::auction::AuctionManager;
@@ -91,6 +93,53 @@ impl AuctioneerServer {
         Ok(Self::new(config))
     }
 
+    /// Start the auction clearing task that runs periodically
+    pub async fn start_auction_clearing_task(&self) {
+        let auction_results = self.auction_results.clone();
+        let auction_timeout_ms = self.config.auction_timeout_ms;
+
+        info!("Starting auction clearing task with {}ms interval", auction_timeout_ms);
+
+        let mut interval_timer = interval(Duration::from_millis(auction_timeout_ms));
+
+        tokio::spawn(async move {
+            loop {
+                interval_timer.tick().await;
+
+                let now = SystemTime::now();
+                let timeout_duration = Duration::from_millis(auction_timeout_ms);
+
+                // Get all auction IDs that need to be cleared
+                let auctions_to_clear = {
+                    let results = auction_results.read().await;
+                    results
+                        .iter()
+                        .filter(|(_, result)| {
+                            now.duration_since(result.created_at)
+                                .map(|elapsed| elapsed > timeout_duration)
+                                .unwrap_or(false)
+                        })
+                        .map(|(auction_id, _)| *auction_id)
+                        .collect::<Vec<_>>()
+                };
+
+                if !auctions_to_clear.is_empty() {
+                    info!("Clearing {} expired auctions", auctions_to_clear.len());
+
+                    // Remove expired auctions
+                    {
+                        let mut results = auction_results.write().await;
+                        for auction_id in auctions_to_clear {
+                            if let Some(removed) = results.remove(&auction_id) {
+                                info!("Cleared expired auction: {} (created at: {:?})", auction_id, removed.created_at);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     pub async fn start(self) -> Result<ServerHandle, Box<dyn std::error::Error + Send + Sync>> {
         let url = format!("0.0.0.0:{}", self.config.port);
         info!("Starting Auctioneer RPC server at {}", url);
@@ -126,6 +175,9 @@ impl AuctioneerServer {
                 manager.start_heartbeat().await;
             }
         });
+
+        // Start the auction clearing task
+        self.start_auction_clearing_task().await;
 
         let http_middleware = tower::ServiceBuilder::new()
             .layer(tower_http::cors::CorsLayer::permissive())
@@ -306,6 +358,14 @@ impl AuctioneerAPIServer for AuctioneerServer {
             "Successfully executed transaction with paymaster: {}, tx_hash: {}, tracking_id: {}",
             auction_result.winning_paymaster, response.transaction_hash, response.tracking_id
         );
+
+        // Immediately clear the auction since it has been successfully executed
+        {
+            let mut results = self.auction_results.write().await;
+            if let Some(removed) = results.remove(&auction_id) {
+                info!("Immediately cleared executed auction: {} (created at: {:?})", auction_id, removed.created_at);
+            }
+        }
 
         Ok(response)
     }

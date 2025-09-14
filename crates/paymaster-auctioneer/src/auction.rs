@@ -88,6 +88,7 @@ impl AuctionManager {
             gas_token: winning_bid.gas_token,
             amount: winning_bid.amount,
             response: winning_bid.response.clone(),
+            created_at: std::time::SystemTime::now(),
         };
 
         info!(
@@ -372,6 +373,7 @@ mod tests {
             gas_token,
             amount,
             response: response.clone(),
+            created_at: std::time::SystemTime::now(),
         };
 
         assert_eq!(auction_result.auction_id, auction_id);
