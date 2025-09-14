@@ -10,6 +10,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         auction_timeout_ms: 5000,
         heartbeat_interval_ms: 30000,
         cleanup_interval_ms: 60000,
+        retry_interval_ms: Some(600000),
         chain_id: "SN_SEPOLIA".to_string(),
         port: 8080,
         log_level: "info".to_string(),

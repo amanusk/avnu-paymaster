@@ -5,7 +5,7 @@ use starknet::core::types::Felt;
 use thiserror::Error;
 
 // Re-export types from paymaster-rpc for convenience
-pub use paymaster_rpc::{BuildTransactionRequest, BuildTransactionResponse, ExecuteRequest, ExecuteResponse, TokenPrice};
+pub use paymaster_rpc::{BuildTransactionRequest, BuildTransactionResponse, Error as PaymasterRpcError, ExecuteRequest, ExecuteResponse, TokenPrice};
 
 /// Configuration for a single paymaster
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +27,8 @@ pub struct AuctioneerConfig {
     pub heartbeat_interval_ms: u64,
     /// Time after which a non-responsive paymaster is removed in milliseconds
     pub cleanup_interval_ms: u64,
+    /// Time to wait before retrying to reactivate a removed paymaster in milliseconds (default: 600000 = 10 minutes)
+    pub retry_interval_ms: Option<u64>,
     /// Starknet chain ID
     pub chain_id: String,
     /// Port to run the server on
@@ -91,18 +93,39 @@ pub enum Error {
     PaymasterRequestFailed(String),
     #[error("no auction found for the provided transaction")]
     NoAuctionFound,
+    #[error("token not supported")]
+    TokenNotSupported,
+    // Re-export ServiceNotAvailable from paymaster-rpc
+    #[error("service not available")]
+    ServiceNotAvailable,
+}
+
+impl From<PaymasterRpcError> for Error {
+    fn from(value: PaymasterRpcError) -> Self {
+        match value {
+            PaymasterRpcError::ServiceNotAvailable => Error::ServiceNotAvailable,
+            PaymasterRpcError::TokenNotSupported => Error::TokenNotSupported,
+            // For other errors, we can either map them or create a generic conversion
+            other => Error::PaymasterRequestFailed(other.to_string()),
+        }
+    }
 }
 
 impl<'a> From<Error> for ErrorObject<'a> {
     fn from(value: Error) -> Self {
         match value {
-            Error::NotYetImplemented => ErrorObject::owned(999, "Not yet implemented", Some(value.to_string())),
-            Error::NoActivePaymasters => ErrorObject::owned(1001, "No active paymasters", Some(value.to_string())),
-            Error::FailedToExtractGasToken => ErrorObject::owned(1002, "Failed to extract gas token", Some(value.to_string())),
-            Error::FailedToCreateAuctionId => ErrorObject::owned(1003, "Failed to create auction ID", Some(value.to_string())),
-            Error::NoValidBids => ErrorObject::owned(1004, "No valid bids", Some(value.to_string())),
-            Error::PaymasterRequestFailed(msg) => ErrorObject::owned(1005, "Paymaster request failed", Some(msg)),
-            Error::NoAuctionFound => ErrorObject::owned(1006, "No auction found", Some(value.to_string())),
+            // Map to specific paymaster RPC errors where possible
+            Error::TokenNotSupported => ErrorObject::borrowed(151, "An error occurred (TOKEN_NOT_SUPPORTED)", None),
+            Error::ServiceNotAvailable => ErrorObject::owned(163, "An error occurred (UNKNOWN_ERROR)", Some(Error::ServiceNotAvailable.to_string())),
+
+            // For all other auctioneer-specific errors, return ServiceNotAvailable (163) with relevant data
+            Error::NotYetImplemented => ErrorObject::owned(163, "An error occurred (UNKNOWN_ERROR)", Some(Error::NotYetImplemented.to_string())),
+            Error::NoActivePaymasters => ErrorObject::owned(163, "An error occurred (UNKNOWN_ERROR)", Some(Error::NoActivePaymasters.to_string())),
+            Error::FailedToExtractGasToken => ErrorObject::owned(163, "An error occurred (UNKNOWN_ERROR)", Some(Error::FailedToExtractGasToken.to_string())),
+            Error::FailedToCreateAuctionId => ErrorObject::owned(163, "An error occurred (UNKNOWN_ERROR)", Some(Error::FailedToCreateAuctionId.to_string())),
+            Error::NoValidBids => ErrorObject::owned(163, "An error occurred (UNKNOWN_ERROR)", Some(Error::NoValidBids.to_string())),
+            Error::PaymasterRequestFailed(msg) => ErrorObject::owned(163, "An error occurred (UNKNOWN_ERROR)", Some(Error::PaymasterRequestFailed(msg).to_string())),
+            Error::NoAuctionFound => ErrorObject::owned(163, "An error occurred (UNKNOWN_ERROR)", Some(Error::NoAuctionFound.to_string())),
         }
     }
 }
