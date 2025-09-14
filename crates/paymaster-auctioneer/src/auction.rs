@@ -179,22 +179,12 @@ impl AuctionManager {
         // Serialize the TypedData to JSON and then hash it
         let typed_data_json = serde_json::to_value(typed_data).map_err(|_| Error::FailedToCreateAuctionId)?;
 
-        // Debug: Log what we're hashing for the auction ID
-        info!("=== AUCTION_ID_GENERATION DEBUG ===");
-        info!(
-            "TypedData being hashed for auction ID: {}",
-            serde_json::to_string_pretty(&typed_data_json).unwrap_or_else(|_| "Failed to serialize".to_string())
-        );
-
         let mut hasher = DefaultHasher::new();
         typed_data_json.hash(&mut hasher);
         let hash_value = hasher.finish();
 
         // Convert the hash to a Felt
         let auction_id = Felt::from(hash_value);
-
-        info!("Generated auction ID: {}", auction_id);
-        info!("=== END AUCTION_ID_GENERATION DEBUG ===");
 
         Ok(auction_id)
     }
