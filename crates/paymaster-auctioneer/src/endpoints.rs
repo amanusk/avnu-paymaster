@@ -7,8 +7,30 @@ use tokio::time::sleep;
 use tracing::{info, instrument, warn};
 
 use crate::auction::AuctionManager;
-use crate::paymaster_manager::PaymasterManager;
-use crate::{AuctionResult, AuctioneerConfig, Error, ExecuteRequest, ExecuteResponse};
+use crate::paymaster_manager::{PaymasterInfo, PaymasterManager};
+use crate::{AuctionResult, AuctioneerConfig, BuildTransactionRequest, BuildTransactionResponse, Error, ExecuteRequest, ExecuteResponse, TokenPrice};
+use paymaster_rpc;
+
+/// Filter paymasters that support the requested gas_token
+pub fn filter_paymasters_by_gas_token(paymasters: HashMap<String, PaymasterInfo>, requested_gas_token: Felt) -> Vec<(String, String)> {
+    paymasters
+        .into_iter()
+        .filter_map(|(name, info)| {
+            let supports_token = info
+                .supported_tokens
+                .iter()
+                .any(|token| token.token_address == requested_gas_token);
+
+            if supports_token {
+                info!("Paymaster {} supports gas_token {}", name, requested_gas_token);
+                Some((name, info.config.url))
+            } else {
+                info!("Paymaster {} does not support gas_token {}, filtering out", name, requested_gas_token);
+                None
+            }
+        })
+        .collect()
+}
 
 /// Execute transaction endpoint implementation
 pub struct ExecuteTransactionEndpoint {
@@ -153,5 +175,190 @@ impl ExecuteTransactionEndpoint {
         }
 
         Ok(response)
+    }
+}
+
+/// Health check endpoint implementation
+pub struct HealthEndpoint {
+    pub paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>,
+}
+
+impl HealthEndpoint {
+    pub fn new(paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>) -> Self {
+        Self { paymaster_manager }
+    }
+
+    #[instrument(name = "paymaster_health", skip(self))]
+    pub async fn health(&self) -> Result<bool, Error> {
+        info!("Health check endpoint invoked");
+        let manager = self.paymaster_manager.read().await;
+        if let Some(manager) = manager.as_ref() {
+            let active_count = manager.count_active_paymasters().await;
+            info!("Health check: {} active paymasters", active_count);
+            if active_count == 0 {
+                return Err(Error::ServiceNotAvailable);
+            }
+            Ok(true)
+        } else {
+            info!("Health check: No paymaster manager available");
+            Err(Error::ServiceNotAvailable)
+        }
+    }
+}
+
+/// Is available endpoint implementation
+pub struct IsAvailableEndpoint {
+    pub paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>,
+}
+
+impl IsAvailableEndpoint {
+    pub fn new(paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>) -> Self {
+        Self { paymaster_manager }
+    }
+
+    #[instrument(name = "paymaster_isAvailable", skip(self))]
+    pub async fn is_available(&self) -> Result<bool, Error> {
+        info!("Is available endpoint invoked");
+        let manager = self.paymaster_manager.read().await;
+        if let Some(manager) = manager.as_ref() {
+            let active_count = manager.count_active_paymasters().await;
+            info!("Is available check: {} active paymasters", active_count);
+            if active_count == 0 {
+                return Err(Error::ServiceNotAvailable);
+            }
+            Ok(true)
+        } else {
+            info!("Is available check: No paymaster manager available");
+            Err(Error::ServiceNotAvailable)
+        }
+    }
+}
+
+/// Get supported tokens endpoint implementation
+pub struct GetSupportedTokensEndpoint {
+    pub paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>,
+}
+
+impl GetSupportedTokensEndpoint {
+    pub fn new(paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>) -> Self {
+        Self { paymaster_manager }
+    }
+
+    #[instrument(name = "paymaster_getSupportedTokens", skip(self))]
+    pub async fn get_supported_tokens(&self) -> Result<Vec<TokenPrice>, Error> {
+        info!("Get supported tokens endpoint invoked");
+        let manager = self.paymaster_manager.read().await;
+        if let Some(manager) = manager.as_ref() {
+            let active_count = manager.count_active_paymasters().await;
+            if active_count == 0 {
+                info!("No active paymasters available, returning error");
+                return Err(Error::ServiceNotAvailable);
+            }
+            let tokens = manager.get_all_supported_tokens().await;
+            info!("Retrieved {} unique supported tokens (deduplicated by token address)", tokens.len());
+            Ok(tokens)
+        } else {
+            info!("No paymaster manager available, returning error");
+            Err(Error::ServiceNotAvailable)
+        }
+    }
+}
+
+/// Build transaction endpoint implementation
+pub struct BuildTransactionEndpoint {
+    pub auction_manager: Arc<AuctionManager>,
+    pub auction_results: Arc<RwLock<HashMap<Felt, AuctionResult>>>,
+    pub paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>,
+}
+
+impl BuildTransactionEndpoint {
+    pub fn new(
+        auction_manager: Arc<AuctionManager>,
+        auction_results: Arc<RwLock<HashMap<Felt, AuctionResult>>>,
+        paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>,
+    ) -> Self {
+        Self {
+            auction_manager,
+            auction_results,
+            paymaster_manager,
+        }
+    }
+
+    #[instrument(name = "paymaster_buildTransaction", skip(self, params))]
+    pub async fn build_transaction(&self, params: BuildTransactionRequest) -> Result<BuildTransactionResponse, Error> {
+        info!("Build transaction endpoint invoked");
+        info!("Transaction details: fee_mode={:?}", params.parameters.fee_mode());
+
+        // Log transaction-specific details
+        match &params.transaction {
+            paymaster_rpc::TransactionParameters::Invoke { invoke } => {
+                info!("Invoke transaction: user_address={:?}, calls_count={}", invoke.user_address, invoke.calls.len());
+            },
+            paymaster_rpc::TransactionParameters::Deploy { deployment } => {
+                info!("Deploy transaction: address={:?}, class_hash={:?}", deployment.address, deployment.class_hash);
+            },
+            paymaster_rpc::TransactionParameters::DeployAndInvoke { deployment, invoke } => {
+                info!(
+                    "DeployAndInvoke transaction: address={:?}, user_address={:?}, calls_count={}",
+                    deployment.address,
+                    invoke.user_address,
+                    invoke.calls.len()
+                );
+            },
+        }
+
+        // Get active paymasters
+        let manager = self.paymaster_manager.read().await;
+        let paymaster_manager = manager.as_ref().ok_or(Error::ServiceNotAvailable)?;
+        let active_paymasters = paymaster_manager.get_active_paymasters().await;
+
+        info!("Found {} active paymasters for auction", active_paymasters.len());
+
+        if active_paymasters.is_empty() {
+            info!("No active paymasters available, returning error");
+            return Err(Error::ServiceNotAvailable);
+        }
+
+        // Only process non-sponsored transactions
+        if params.parameters.fee_mode().is_sponsored() {
+            info!("Sponsored transaction detected, not yet implemented");
+            return Err(Error::NotYetImplemented);
+        }
+
+        // Extract gas_token from the request parameters
+        let requested_gas_token = params.parameters.gas_token();
+        info!("Requested gas_token: {}", requested_gas_token);
+
+        // Filter paymasters that support the requested gas_token
+        let paymasters = filter_paymasters_by_gas_token(active_paymasters, requested_gas_token);
+
+        info!("Found {} paymasters that support gas_token {}", paymasters.len(), requested_gas_token);
+
+        if paymasters.is_empty() {
+            info!("No paymasters support the requested gas_token: {}", requested_gas_token);
+            return Err(Error::TokenNotSupported);
+        }
+
+        info!("Starting auction with {} paymasters", paymasters.len());
+        for (name, url) in &paymasters {
+            info!("  - Paymaster: {} at {}", name, url);
+        }
+
+        // Run the auction
+        let auction_result = self.auction_manager.run_auction(paymasters, params).await?;
+
+        info!(
+            "Auction completed: winner={}, auction_id={:?}, gas_token={:?}, amount={:?}",
+            auction_result.winning_paymaster, auction_result.auction_id, auction_result.gas_token, auction_result.amount
+        );
+
+        // Store auction result
+        {
+            let mut results = self.auction_results.write().await;
+            results.insert(auction_result.auction_id, auction_result.clone());
+        }
+
+        info!("Build transaction completed successfully");
+        Ok(auction_result.response)
     }
 }
