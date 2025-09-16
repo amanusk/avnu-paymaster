@@ -134,7 +134,7 @@ impl<'a> From<Error> for ErrorObject<'a> {
     }
 }
 
-pub mod auction;
+pub mod auction_manager;
 pub mod endpoints;
 pub mod paymaster_manager;
 pub mod server;

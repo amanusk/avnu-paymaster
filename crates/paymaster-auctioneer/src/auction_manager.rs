@@ -2,21 +2,38 @@ use crate::{AuctionResult, BuildTransactionResponse, Error, PaymasterBid};
 use paymaster_rpc::client::Client;
 use paymaster_starknet::values::decoding::TypedValueDecoder;
 use starknet::core::types::Felt;
-use std::time::Duration;
-use tokio::time::timeout;
-use tracing::{debug, info, warn};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+use tokio::sync::RwLock;
+use tokio::time::{interval, timeout};
+use tracing::{info, warn};
 
-/// Handles auction logic for selecting the best paymaster bid
+/// Handles auction logic for selecting the best paymaster bid and managing auction results
 #[derive(Clone)]
 pub struct AuctionManager {
     /// Timeout for individual paymaster requests
     pub request_timeout: Duration,
+    /// Storage for auction results
+    pub auction_results: Arc<RwLock<HashMap<Felt, AuctionResult>>>,
+    /// Timeout for auction clearing in milliseconds
+    pub auction_timeout_ms: u64,
 }
 
 impl AuctionManager {
     pub fn new() -> Self {
         Self {
             request_timeout: Duration::from_millis(5000), // 5 second timeout
+            auction_results: Arc::new(RwLock::new(HashMap::new())),
+            auction_timeout_ms: 30000, // 30 second default timeout
+        }
+    }
+
+    pub fn new_with_config(request_timeout: Duration, auction_timeout_ms: u64) -> Self {
+        Self {
+            request_timeout,
+            auction_results: Arc::new(RwLock::new(HashMap::new())),
+            auction_timeout_ms,
         }
     }
 
@@ -90,8 +107,11 @@ impl AuctionManager {
             gas_token: winning_bid.gas_token,
             amount: winning_bid.amount,
             response: winning_bid.response.clone(),
-            created_at: std::time::SystemTime::now(),
+            created_at: SystemTime::now(),
         };
+
+        // Store the auction result
+        self.store_auction_result(auction_result.clone()).await;
 
         info!(
             "Auction completed. Winner: {}, Gas token: {}, Amount: {}, Auction ID: {}",
@@ -197,6 +217,71 @@ impl AuctionManager {
         let auction_id = Felt::from(hash_value);
 
         Ok(auction_id)
+    }
+
+    /// Store an auction result
+    pub async fn store_auction_result(&self, auction_result: AuctionResult) {
+        let mut results = self.auction_results.write().await;
+        results.insert(auction_result.auction_id, auction_result);
+    }
+
+    /// Get an auction result by ID
+    pub async fn get_auction_result(&self, auction_id: Felt) -> Option<AuctionResult> {
+        let results = self.auction_results.read().await;
+        results.get(&auction_id).cloned()
+    }
+
+    /// Remove an auction result by ID
+    pub async fn remove_auction_result(&self, auction_id: Felt) -> Option<AuctionResult> {
+        let mut results = self.auction_results.write().await;
+        results.remove(&auction_id)
+    }
+
+    /// Start the auction clearing task that runs periodically
+    pub async fn start_auction_clearing_task(&self) {
+        let auction_results = self.auction_results.clone();
+        let auction_timeout_ms = self.auction_timeout_ms;
+
+        info!("Starting auction clearing task with {}ms interval", auction_timeout_ms);
+
+        let mut interval_timer = interval(Duration::from_millis(auction_timeout_ms));
+
+        tokio::spawn(async move {
+            loop {
+                interval_timer.tick().await;
+
+                let now = SystemTime::now();
+                let timeout_duration = Duration::from_millis(auction_timeout_ms);
+
+                // Get all auction IDs that need to be cleared
+                let auctions_to_clear = {
+                    let results = auction_results.read().await;
+                    results
+                        .iter()
+                        .filter(|(_, result)| {
+                            now.duration_since(result.created_at)
+                                .map(|elapsed| elapsed > timeout_duration)
+                                .unwrap_or(false)
+                        })
+                        .map(|(auction_id, _)| *auction_id)
+                        .collect::<Vec<_>>()
+                };
+
+                if !auctions_to_clear.is_empty() {
+                    info!("Clearing {} expired auctions", auctions_to_clear.len());
+
+                    // Remove expired auctions
+                    {
+                        let mut results = auction_results.write().await;
+                        for auction_id in auctions_to_clear {
+                            if let Some(removed) = results.remove(&auction_id) {
+                                info!("Cleared expired auction: {} (created at: {:?})", auction_id, removed.created_at);
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 }
 

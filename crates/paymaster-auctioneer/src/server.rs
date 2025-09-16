@@ -9,19 +9,14 @@ use jsonrpsee::MethodResponse;
 use std::borrow::Cow;
 use std::fs;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use tokio::sync::RwLock;
-use tokio::time::interval;
 use tracing::{info, instrument};
 
-use crate::auction::AuctionManager;
+use crate::auction_manager::AuctionManager;
 use crate::endpoints::{BuildTransactionEndpoint, ExecuteTransactionEndpoint, GetSupportedTokensEndpoint, HealthEndpoint, IsAvailableEndpoint};
 use crate::paymaster_manager::PaymasterManager;
-use crate::{
-    AuctionResult, AuctioneerAPIServer, AuctioneerConfig, BuildTransactionRequest, BuildTransactionResponse, Error, ExecuteRequest, ExecuteResponse, TokenPrice,
-};
-use starknet::core::types::Felt;
-use std::collections::HashMap;
+use crate::{AuctioneerAPIServer, AuctioneerConfig, BuildTransactionRequest, BuildTransactionResponse, Error, ExecuteRequest, ExecuteResponse, TokenPrice};
 
 /// Payload formatter middleware that wraps parameters in array format
 /// This ensures compatibility with both RPC clients and HTTP raw calls
@@ -73,8 +68,7 @@ where
 pub struct AuctioneerServer {
     pub config: AuctioneerConfig,
     pub paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>,
-    pub auction_results: Arc<RwLock<HashMap<Felt, AuctionResult>>>,
-    pub auction_manager: AuctionManager,
+    pub auction_manager: Arc<AuctionManager>,
     pub execute_endpoint: ExecuteTransactionEndpoint,
     pub health_endpoint: HealthEndpoint,
     pub is_available_endpoint: IsAvailableEndpoint,
@@ -84,20 +78,19 @@ pub struct AuctioneerServer {
 
 impl AuctioneerServer {
     pub fn new(config: AuctioneerConfig) -> Self {
-        let auction_manager = AuctionManager::new();
-        let auction_results = Arc::new(RwLock::new(HashMap::new()));
+        let request_timeout = Duration::from_millis(5000); // 5 second timeout
+        let auction_manager = Arc::new(AuctionManager::new_with_config(request_timeout, config.auction_timeout_ms));
         let paymaster_manager = Arc::new(RwLock::new(None));
 
-        let execute_endpoint = ExecuteTransactionEndpoint::new(Arc::new(auction_manager.clone()), auction_results.clone(), paymaster_manager.clone(), config.clone());
+        let execute_endpoint = ExecuteTransactionEndpoint::new(auction_manager.clone(), paymaster_manager.clone(), config.clone());
         let health_endpoint = HealthEndpoint::new(paymaster_manager.clone());
         let is_available_endpoint = IsAvailableEndpoint::new(paymaster_manager.clone());
         let get_supported_tokens_endpoint = GetSupportedTokensEndpoint::new(paymaster_manager.clone());
-        let build_transaction_endpoint = BuildTransactionEndpoint::new(Arc::new(auction_manager.clone()), auction_results.clone(), paymaster_manager.clone());
+        let build_transaction_endpoint = BuildTransactionEndpoint::new(auction_manager.clone(), paymaster_manager.clone());
 
         Self {
             config,
             paymaster_manager,
-            auction_results,
             auction_manager,
             execute_endpoint,
             health_endpoint,
@@ -112,53 +105,6 @@ impl AuctioneerServer {
         let config_data = fs::read_to_string(path)?;
         let config: AuctioneerConfig = serde_json::from_str(&config_data)?;
         Ok(Self::new(config))
-    }
-
-    /// Start the auction clearing task that runs periodically
-    pub async fn start_auction_clearing_task(&self) {
-        let auction_results = self.auction_results.clone();
-        let auction_timeout_ms = self.config.auction_timeout_ms;
-
-        info!("Starting auction clearing task with {}ms interval", auction_timeout_ms);
-
-        let mut interval_timer = interval(Duration::from_millis(auction_timeout_ms));
-
-        tokio::spawn(async move {
-            loop {
-                interval_timer.tick().await;
-
-                let now = SystemTime::now();
-                let timeout_duration = Duration::from_millis(auction_timeout_ms);
-
-                // Get all auction IDs that need to be cleared
-                let auctions_to_clear = {
-                    let results = auction_results.read().await;
-                    results
-                        .iter()
-                        .filter(|(_, result)| {
-                            now.duration_since(result.created_at)
-                                .map(|elapsed| elapsed > timeout_duration)
-                                .unwrap_or(false)
-                        })
-                        .map(|(auction_id, _)| *auction_id)
-                        .collect::<Vec<_>>()
-                };
-
-                if !auctions_to_clear.is_empty() {
-                    info!("Clearing {} expired auctions", auctions_to_clear.len());
-
-                    // Remove expired auctions
-                    {
-                        let mut results = auction_results.write().await;
-                        for auction_id in auctions_to_clear {
-                            if let Some(removed) = results.remove(&auction_id) {
-                                info!("Cleared expired auction: {} (created at: {:?})", auction_id, removed.created_at);
-                            }
-                        }
-                    }
-                }
-            }
-        });
     }
 
     pub async fn start(self) -> Result<ServerHandle, Box<dyn std::error::Error + Send + Sync>> {
@@ -206,7 +152,7 @@ impl AuctioneerServer {
         });
 
         // Start the auction clearing task
-        self.start_auction_clearing_task().await;
+        self.auction_manager.start_auction_clearing_task().await;
 
         let http_middleware = tower::ServiceBuilder::new()
             .layer(tower_http::cors::CorsLayer::permissive())
@@ -264,7 +210,7 @@ mod tests {
 
     #[test]
     fn test_filter_paymasters_by_gas_token() {
-        let server = AuctioneerServer::new(AuctioneerConfig {
+        let _server = AuctioneerServer::new(AuctioneerConfig {
             auction_timeout_ms: 5000,
             heartbeat_interval_ms: 1000,
             cleanup_interval_ms: 10000,
@@ -281,7 +227,7 @@ mod tests {
         let gas_token_2 = Felt::from_hex("0x456").unwrap();
         let gas_token_3 = Felt::from_hex("0x789").unwrap();
 
-        let mut paymasters = HashMap::new();
+        let mut paymasters = std::collections::HashMap::new();
 
         // Paymaster 1 supports gas_token_1 and gas_token_2
         paymasters.insert(

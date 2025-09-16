@@ -6,9 +6,9 @@ use tokio::sync::RwLock;
 use tokio::time::sleep;
 use tracing::{info, instrument, warn};
 
-use crate::auction::AuctionManager;
+use crate::auction_manager::AuctionManager;
 use crate::paymaster_manager::{PaymasterInfo, PaymasterManager};
-use crate::{AuctionResult, AuctioneerConfig, BuildTransactionRequest, BuildTransactionResponse, Error, ExecuteRequest, ExecuteResponse, TokenPrice};
+use crate::{AuctioneerConfig, BuildTransactionRequest, BuildTransactionResponse, Error, ExecuteRequest, ExecuteResponse, TokenPrice};
 use paymaster_rpc;
 
 /// Filter paymasters that support the requested gas_token
@@ -35,21 +35,14 @@ pub fn filter_paymasters_by_gas_token(paymasters: HashMap<String, PaymasterInfo>
 /// Execute transaction endpoint implementation
 pub struct ExecuteTransactionEndpoint {
     pub auction_manager: Arc<AuctionManager>,
-    pub auction_results: Arc<RwLock<HashMap<Felt, AuctionResult>>>,
     pub paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>,
     pub config: AuctioneerConfig,
 }
 
 impl ExecuteTransactionEndpoint {
-    pub fn new(
-        auction_manager: Arc<AuctionManager>,
-        auction_results: Arc<RwLock<HashMap<Felt, AuctionResult>>>,
-        paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>,
-        config: AuctioneerConfig,
-    ) -> Self {
+    pub fn new(auction_manager: Arc<AuctionManager>, paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>, config: AuctioneerConfig) -> Self {
         Self {
             auction_manager,
-            auction_results,
             paymaster_manager,
             config,
         }
@@ -74,10 +67,7 @@ impl ExecuteTransactionEndpoint {
         info!("Generated auction ID from typed data: {}", auction_id);
 
         // Check if the auction exists
-        let auction_result = {
-            let results = self.auction_results.read().await;
-            results.get(&auction_id).cloned()
-        };
+        let auction_result = self.auction_manager.get_auction_result(auction_id).await;
 
         let auction_result = match auction_result {
             Some(result) => {
@@ -167,11 +157,8 @@ impl ExecuteTransactionEndpoint {
         );
 
         // Immediately clear the auction since it has been successfully executed
-        {
-            let mut results = self.auction_results.write().await;
-            if let Some(removed) = results.remove(&auction_id) {
-                info!("Immediately cleared executed auction: {} (created at: {:?})", auction_id, removed.created_at);
-            }
+        if let Some(removed) = self.auction_manager.remove_auction_result(auction_id).await {
+            info!("Immediately cleared executed auction: {} (created at: {:?})", auction_id, removed.created_at);
         }
 
         Ok(response)
@@ -267,19 +254,13 @@ impl GetSupportedTokensEndpoint {
 /// Build transaction endpoint implementation
 pub struct BuildTransactionEndpoint {
     pub auction_manager: Arc<AuctionManager>,
-    pub auction_results: Arc<RwLock<HashMap<Felt, AuctionResult>>>,
     pub paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>,
 }
 
 impl BuildTransactionEndpoint {
-    pub fn new(
-        auction_manager: Arc<AuctionManager>,
-        auction_results: Arc<RwLock<HashMap<Felt, AuctionResult>>>,
-        paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>,
-    ) -> Self {
+    pub fn new(auction_manager: Arc<AuctionManager>, paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>) -> Self {
         Self {
             auction_manager,
-            auction_results,
             paymaster_manager,
         }
     }
@@ -352,11 +333,7 @@ impl BuildTransactionEndpoint {
             auction_result.winning_paymaster, auction_result.auction_id, auction_result.gas_token, auction_result.amount
         );
 
-        // Store auction result
-        {
-            let mut results = self.auction_results.write().await;
-            results.insert(auction_result.auction_id, auction_result.clone());
-        }
+        // Auction result is already stored by the auction manager
 
         info!("Build transaction completed successfully");
         Ok(auction_result.response)
