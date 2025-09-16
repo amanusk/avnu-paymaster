@@ -15,6 +15,7 @@ use tokio::time::interval;
 use tracing::{info, instrument};
 
 use crate::auction::AuctionManager;
+use crate::endpoints::ExecuteTransactionEndpoint;
 use crate::paymaster_manager::PaymasterManager;
 use crate::{
     AuctionResult, AuctioneerAPIServer, AuctioneerConfig, BuildTransactionRequest, BuildTransactionResponse, Error, ExecuteRequest, ExecuteResponse, TokenPrice,
@@ -74,15 +75,23 @@ pub struct AuctioneerServer {
     pub paymaster_manager: Arc<RwLock<Option<PaymasterManager>>>,
     pub auction_results: Arc<RwLock<HashMap<Felt, AuctionResult>>>,
     pub auction_manager: AuctionManager,
+    pub execute_endpoint: ExecuteTransactionEndpoint,
 }
 
 impl AuctioneerServer {
     pub fn new(config: AuctioneerConfig) -> Self {
+        let auction_manager = AuctionManager::new();
+        let auction_results = Arc::new(RwLock::new(HashMap::new()));
+        let paymaster_manager = Arc::new(RwLock::new(None));
+
+        let execute_endpoint = ExecuteTransactionEndpoint::new(Arc::new(auction_manager.clone()), auction_results.clone(), paymaster_manager.clone(), config.clone());
+
         Self {
             config,
-            paymaster_manager: Arc::new(RwLock::new(None)),
-            auction_results: Arc::new(RwLock::new(HashMap::new())),
-            auction_manager: AuctionManager::new(),
+            paymaster_manager,
+            auction_results,
+            auction_manager,
+            execute_endpoint,
         }
     }
 
@@ -342,75 +351,7 @@ impl AuctioneerAPIServer for AuctioneerServer {
 
     #[instrument(name = "paymaster_executeTransaction", skip(self, _ext, params))]
     async fn execute_transaction(&self, _ext: &Extensions, params: ExecuteRequest) -> Result<ExecuteResponse, Error> {
-        info!("Execute transaction endpoint invoked");
-
-        // Extract the typed data from the request
-        let typed_data = match &params.transaction {
-            paymaster_rpc::ExecutableTransactionParameters::Invoke { invoke } => &invoke.typed_data,
-            paymaster_rpc::ExecutableTransactionParameters::DeployAndInvoke { invoke, .. } => &invoke.typed_data,
-            paymaster_rpc::ExecutableTransactionParameters::Deploy { .. } => {
-                info!("Deploy transactions not supported for execution");
-                return Err(Error::NotYetImplemented);
-            },
-        };
-
-        // Generate auction ID from the typed data (without signature)
-        let auction_id = self.auction_manager.generate_auction_id_from_typed_data(typed_data)?;
-        info!("Generated auction ID from typed data: {}", auction_id);
-
-        // Check if the auction exists
-        let auction_result = {
-            let results = self.auction_results.read().await;
-            results.get(&auction_id).cloned()
-        };
-
-        let auction_result = match auction_result {
-            Some(result) => {
-                info!("Found auction result for ID: {}, winner: {}", auction_id, result.winning_paymaster);
-                result
-            },
-            None => {
-                info!("No auction found for ID: {}", auction_id);
-                return Err(Error::NoAuctionFound);
-            },
-        };
-
-        // Get the winning paymaster's URL
-        let manager = self.paymaster_manager.read().await;
-        let paymaster_manager = manager.as_ref().ok_or(Error::ServiceNotAvailable)?;
-        let winning_paymaster_info = paymaster_manager
-            .get_paymaster(&auction_result.winning_paymaster)
-            .await
-            .ok_or_else(|| Error::PaymasterRequestFailed(format!("Winning paymaster {} not found", auction_result.winning_paymaster)))?;
-
-        info!(
-            "Forwarding execute request to winning paymaster: {} at {}",
-            auction_result.winning_paymaster, winning_paymaster_info.config.url
-        );
-
-        // Create a client for the winning paymaster
-        let client = paymaster_rpc::client::Client::new(&winning_paymaster_info.config.url);
-
-        // Forward the execute request to the winning paymaster
-        let response = client
-            .execute_transaction(params)
-            .await
-            .map_err(|e| Error::PaymasterRequestFailed(format!("Failed to execute transaction with winning paymaster: {}", e)))?;
-
-        info!(
-            "Successfully executed transaction with paymaster: {}, tx_hash: {}, tracking_id: {}",
-            auction_result.winning_paymaster, response.transaction_hash, response.tracking_id
-        );
-
-        // Immediately clear the auction since it has been successfully executed
-        {
-            let mut results = self.auction_results.write().await;
-            if let Some(removed) = results.remove(&auction_id) {
-                info!("Immediately cleared executed auction: {} (created at: {:?})", auction_id, removed.created_at);
-            }
-        }
-
-        Ok(response)
+        self.execute_endpoint.execute_transaction(params).await
     }
 
     #[instrument(name = "paymaster_getSupportedTokens", skip(self, _ext))]
@@ -448,6 +389,8 @@ mod tests {
             heartbeat_interval_ms: 1000,
             cleanup_interval_ms: 10000,
             retry_interval_ms: Some(600000),
+            execute_retry_count: Some(3),
+            execute_retry_delay_ms: Some(1000),
             chain_id: "SN_SEPOLIA".to_string(),
             port: 8080,
             log_level: "info".to_string(),
@@ -549,6 +492,8 @@ mod tests {
             heartbeat_interval_ms: 1000,
             cleanup_interval_ms: 10000,
             retry_interval_ms: Some(600000),
+            execute_retry_count: Some(3),
+            execute_retry_delay_ms: Some(1000),
             chain_id: "SN_SEPOLIA".to_string(),
             port: 8080,
             log_level: "info".to_string(),

@@ -7,6 +7,7 @@ use tokio::time::timeout;
 use tracing::{debug, info, warn};
 
 /// Handles auction logic for selecting the best paymaster bid
+#[derive(Clone)]
 pub struct AuctionManager {
     /// Timeout for individual paymaster requests
     pub request_timeout: Duration,

@@ -29,6 +29,10 @@ pub struct AuctioneerConfig {
     pub cleanup_interval_ms: u64,
     /// Time to wait before retrying to reactivate a removed paymaster in milliseconds (default: 600000 = 10 minutes)
     pub retry_interval_ms: Option<u64>,
+    /// Number of retries for execute_transaction calls to paymasters (default: 3)
+    pub execute_retry_count: Option<u32>,
+    /// Delay between retries for execute_transaction calls in milliseconds (default: 1000 = 1 second)
+    pub execute_retry_delay_ms: Option<u64>,
     /// Starknet chain ID
     pub chain_id: String,
     /// Port to run the server on
@@ -131,6 +135,7 @@ impl<'a> From<Error> for ErrorObject<'a> {
 }
 
 pub mod auction;
+pub mod endpoints;
 pub mod paymaster_manager;
 pub mod server;
 
