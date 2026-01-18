@@ -3,25 +3,6 @@ use std::io::{self, Write};
 use std::str::FromStr;
 use std::time::Duration;
 
-use clap::Args;
-use paymaster_common::service::Service;
-use paymaster_prices::avnu::AVNUPriceClientConfiguration;
-use paymaster_prices::Configuration as PriceConfiguration;
-use paymaster_relayer::rebalancing::{OptionalRebalancingConfiguration, RebalancingConfiguration};
-use paymaster_relayer::swap::client::SwapClientConfiguration;
-use paymaster_relayer::swap::{SwapClientConfigurator, SwapConfiguration};
-use paymaster_relayer::{Context as RelayerContext, RelayerManagerConfiguration, RelayerRebalancingService, RelayersConfiguration};
-use paymaster_rpc::RPCConfiguration;
-use paymaster_service::core::context::configuration::{Configuration as ServiceConfiguration, VerbosityConfiguration};
-use paymaster_starknet::constants::{Endpoint, Token};
-use paymaster_starknet::math::{format_units, parse_units};
-use paymaster_starknet::transaction::{Calls, TimeBounds};
-use paymaster_starknet::{ChainID, Client, Configuration as StarknetConfiguration, Configuration, StarknetAccountConfiguration};
-use starknet::accounts::ConnectedAccount;
-use starknet::core::types::{Call, Felt};
-use starknet::signers::SigningKey;
-use tracing::info;
-
 use crate::command::forwarder::build::ForwarderDeployment;
 use crate::command::gas_tank::build::GasTankDeployment;
 use crate::command::relayer::build::RelayerDeployment;
@@ -34,6 +15,25 @@ use crate::constants::{
 use crate::core::starknet::transaction::status::wait_for_transaction_success;
 use crate::core::Error;
 use crate::validation::{assert_rebalancing_configuration, assert_strk_balance};
+use clap::Args;
+use paymaster_common::service::Service;
+use paymaster_prices::coingecko::{DEFAULT_COINGECKO_MAINNET_TOKENS, DEFAULT_COINGECKO_PRICE_ENDPOINT, DEFAULT_COINGECKO_SEPOLIA_TOKENS};
+use paymaster_relayer::rebalancing::{OptionalRebalancingConfiguration, RebalancingConfiguration};
+use paymaster_relayer::swap::client::SwapClientConfiguration;
+use paymaster_relayer::swap::{SwapClientConfigurator, SwapConfiguration};
+use paymaster_relayer::{Context as RelayerContext, RelayerManagerConfiguration, RelayerRebalancingService, RelayersConfiguration};
+use paymaster_rpc::RPCConfiguration;
+use paymaster_service::core::context::configuration::{Configuration as ServiceConfiguration, PriceConfiguration, PriceOracleConfiguration, VerbosityConfiguration};
+use paymaster_starknet::constants::Token;
+use paymaster_starknet::math::{denormalize_felt, normalize_felt};
+use paymaster_starknet::transaction::{Calls, TimeBounds};
+use paymaster_starknet::{
+    ChainID, Client, Configuration as StarknetConfiguration, Configuration, StarknetAccountConfiguration, DEFAULT_MAINNET_RPC_ENDPOINT, DEFAULT_SEPOLIA_RPC_ENDPOINT,
+};
+use starknet::accounts::ConnectedAccount;
+use starknet::core::types::{Call, Felt};
+use starknet::signers::SigningKey;
+use tracing::info;
 
 #[derive(Args, Clone)]
 pub struct SetupParameters {
@@ -115,17 +115,21 @@ pub async fn deploy_paymaster_core(params: SetupParameters, skip_user_confirmati
 
     // Load the configuration
     let chain_id = ChainID::from_string(&params.chain_id).expect("invalid chain-id");
-    let default_rpc_url = Endpoint::default_rpc_url(&chain_id);
+    let default_rpc_url = match chain_id {
+        ChainID::Sepolia => DEFAULT_SEPOLIA_RPC_ENDPOINT,
+        ChainID::Mainnet => DEFAULT_MAINNET_RPC_ENDPOINT,
+    };
+
     let rpc_url = params.rpc_url.unwrap_or_else(|| default_rpc_url.to_string());
-    let gas_tank_fund_in_fri = parse_units(params.fund, 18);
-    let estimate_account_fund_in_fri = parse_units(params.estimate_account_fund, 18);
+    let gas_tank_fund_in_fri = normalize_felt(params.fund, 18);
+    let estimate_account_fund_in_fri = normalize_felt(params.estimate_account_fund, 18);
     let num_relayers = params.num_relayers;
 
     // By default, we support USDC as gas token
     let supported_tokens = HashSet::from([Token::usdc(&chain_id).address]);
 
     // Compute the total funding amount
-    let gas_tank_reserve_in_fri = parse_units(1.0, 18);
+    let gas_tank_reserve_in_fri = normalize_felt(1.0, 18);
     let estimate_account_funding_amount = estimate_account_fund_in_fri;
     let total_funding_amount = estimate_account_funding_amount + gas_tank_reserve_in_fri + gas_tank_fund_in_fri;
 
@@ -133,18 +137,21 @@ pub async fn deploy_paymaster_core(params: SetupParameters, skip_user_confirmati
     info!("Using chain-id: {}", chain_id.as_identifier());
     info!("Using RPC URL: {}", rpc_url);
     info!("Nbr of relayers: {}", num_relayers);
-    info!("Minimum relayer balance: {} STRK", format_units(parse_units(params.min_relayer_balance, 18), 18));
+    info!(
+        "Minimum relayer balance: {} STRK",
+        denormalize_felt(normalize_felt(params.min_relayer_balance, 18), 18)
+    );
     info!(
         "Rebalancing trigger balance: {} STRK",
-        format_units(parse_units(params.rebalancing_trigger_balance, 18), 18)
+        denormalize_felt(normalize_felt(params.rebalancing_trigger_balance, 18), 18)
     );
-    info!("Fund estimate account with: {} STRK", format_units(estimate_account_fund_in_fri, 18));
+    info!("Fund estimate account with: {} STRK", denormalize_felt(estimate_account_fund_in_fri, 18));
     info!(
         "Fund gas tank with: {} STRK(reserve) + {} STRK(fund)",
-        format_units(gas_tank_reserve_in_fri, 18),
-        format_units(gas_tank_fund_in_fri, 18)
+        denormalize_felt(gas_tank_reserve_in_fri, 18),
+        denormalize_felt(gas_tank_fund_in_fri, 18)
     );
-    info!("Total amount to fund paymaster: {} STRK", format_units(total_funding_amount, 18));
+    info!("Total amount to fund paymaster: {} STRK", denormalize_felt(total_funding_amount, 18));
     info!("Profile path: {}", params.profile);
 
     // Initialize the Starknet client
@@ -158,8 +165,8 @@ pub async fn deploy_paymaster_core(params: SetupParameters, skip_user_confirmati
     // Check that the initial funding is enough for rebalancing to work properly
     assert_rebalancing_configuration(
         num_relayers,
-        parse_units(params.min_relayer_balance, 18),
-        parse_units(params.rebalancing_trigger_balance, 18),
+        normalize_felt(params.min_relayer_balance, 18),
+        normalize_felt(params.rebalancing_trigger_balance, 18),
         gas_tank_fund_in_fri,
     )
     .await?;
@@ -174,7 +181,7 @@ pub async fn deploy_paymaster_core(params: SetupParameters, skip_user_confirmati
     if !skip_user_confirmation {
         print!(
             "Do you want to proceed with the deployment? This will transfer {} STRK tokens to gas tank and estimate account. (y/N): ",
-            format_units(total_funding_amount, 18)
+            denormalize_felt(total_funding_amount, 18)
         );
         io::stdout().flush().unwrap();
 
@@ -245,26 +252,30 @@ pub async fn deploy_paymaster_core(params: SetupParameters, skip_user_confirmati
         relayers: RelayersConfiguration {
             private_key: shared_relayers_pk,
             addresses: relayers_deployment.addresses,
-            min_relayer_balance: Felt::from(parse_units(params.min_relayer_balance, 18)),
+            min_relayer_balance: Felt::from(normalize_felt(params.min_relayer_balance, 18)),
             lock: DEFAULT_RELAYERS_LOCK_MODE,
             rebalancing: OptionalRebalancingConfiguration::initialize(Some(RebalancingConfiguration {
                 check_interval: params.rebalancing_check_interval,
-                trigger_balance: Felt::from(parse_units(params.rebalancing_trigger_balance, 18)),
+                trigger_balance: Felt::from(normalize_felt(params.rebalancing_trigger_balance, 18)),
                 swap_config: SwapConfiguration {
                     slippage: params.swap_slippage,
-                    swap_client_config: SwapClientConfigurator::AVNU(SwapClientConfiguration {
-                        endpoint: Endpoint::default_swap_url(&chain_id).to_string(),
-                        chain_id,
-                    }),
+                    swap_client_config: SwapClientConfigurator::AVNU(SwapClientConfiguration::default_from_chain(chain_id)),
                     max_price_impact: params.max_price_impact,
                     swap_interval: params.swap_interval,
                     min_usd_sell_amount: params.min_swap_sell_amount,
                 },
             })),
         },
-        price: PriceConfiguration::AVNU(AVNUPriceClientConfiguration {
-            endpoint: Endpoint::default_price_url(&chain_id).to_string(),
+        price: PriceConfiguration::Single(PriceOracleConfiguration::Coingecko {
+            endpoint: DEFAULT_COINGECKO_PRICE_ENDPOINT.to_string(),
             api_key: None,
+            address_to_id: match chain_id {
+                ChainID::Sepolia => DEFAULT_COINGECKO_SEPOLIA_TOKENS.iter(),
+                ChainID::Mainnet => DEFAULT_COINGECKO_MAINNET_TOKENS.iter(),
+            }
+            .cloned()
+            .map(|(x, y)| (x, y.to_string()))
+            .collect(),
         }),
         sponsoring: DEFAULT_SPONSORING_MODE,
     };
@@ -309,6 +320,7 @@ async fn perform_rebalancing(starknet: &Client, configuration: &ServiceConfigura
         gas_tank: configuration.gas_tank.clone(),
         relayers: configuration.relayers.clone(),
         supported_tokens: configuration.supported_tokens.clone(),
+        price: configuration.clone().into(),
     };
 
     // Create a relayer context and rebalancing service
@@ -316,26 +328,23 @@ async fn perform_rebalancing(starknet: &Client, configuration: &ServiceConfigura
     let rebalancing_service = RelayerRebalancingService::new(relayer_context.clone()).await;
 
     // Perform initial rebalancing to distribute funds to relayers
-    match rebalancing_service.try_rebalance(initial_gas_tank_fund).await {
-        Ok(rebalancing_calls) => {
-            if !rebalancing_calls.is_empty() {
-                info!("➡️ Initial rebalancing prepared successfully");
+    if let Ok(rebalancing_calls) = rebalancing_service.try_rebalance(initial_gas_tank_fund).await {
+        if !rebalancing_calls.is_empty() {
+            info!("➡️ Initial rebalancing prepared successfully");
 
-                // Get gas tank account
-                let gas_tank_account = starknet.initialize_account(&StarknetAccountConfiguration {
-                    address: configuration.gas_tank.address,
-                    private_key: configuration.gas_tank.private_key,
-                });
+            // Get gas tank account
+            let gas_tank_account = starknet.initialize_account(&StarknetAccountConfiguration {
+                address: configuration.gas_tank.address,
+                private_key: configuration.gas_tank.private_key,
+            });
 
-                return Ok(rebalancing_calls.as_execute_from_outside_call(
-                    master_address,
-                    gas_tank_account,
-                    configuration.gas_tank.private_key,
-                    TimeBounds::valid_for(Duration::from_secs(3600)),
-                ));
-            }
-        },
-        Err(_) => {},
+            return Ok(rebalancing_calls.as_execute_from_outside_call(
+                master_address,
+                gas_tank_account,
+                configuration.gas_tank.private_key,
+                TimeBounds::valid_for(Duration::from_secs(3600)),
+            ));
+        }
     }
     Err(Error::Execution(
         "⚠️ Initial rebalancing failed. Relayers will be activated by the background service.".to_string(),

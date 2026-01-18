@@ -3,7 +3,6 @@ use std::time::Instant;
 
 use paymaster_common::service::TokioServiceManager;
 use starknet::accounts::Account;
-use starknet::core::types::Felt;
 use thiserror::Error;
 use tracing::debug;
 
@@ -23,7 +22,7 @@ pub use rebalancing::RelayerManagerConfiguration;
 
 use crate::monitoring::availability::EnabledRelayersService;
 use crate::monitoring::balance::RelayerBalanceMonitoring;
-use crate::monitoring::transaction::RelayerTransactionMonitoring;
+use crate::monitoring::gas_tank::GasTankBalanceMonitoring;
 
 mod monitoring;
 pub mod rebalancing;
@@ -62,11 +61,6 @@ pub enum Error {
     Execution(String),
 }
 
-#[derive(Debug, Clone)]
-pub enum Message {
-    Transaction { relayer: Felt, transaction_hash: Felt },
-}
-
 #[derive(Clone)]
 pub struct RelayerManager {
     context: Context,
@@ -81,8 +75,8 @@ impl RelayerManager {
 
         let mut services = TokioServiceManager::new(context.clone());
         services.spawn::<RelayerBalanceMonitoring>();
-        services.spawn::<RelayerTransactionMonitoring>();
         services.spawn::<EnabledRelayersService>();
+        services.spawn::<GasTankBalanceMonitoring>();
 
         // Start the rebalancing service if configured
         if configuration.relayers.rebalancing.has_configuration() {
@@ -162,7 +156,7 @@ mod tests {
         use std::time::Duration;
 
         use async_trait::async_trait;
-        use paymaster_starknet::constants::{Endpoint, Token};
+        use paymaster_starknet::constants::Token;
         use paymaster_starknet::{ChainID, Configuration as StarknetConfiguration, StarknetAccountConfiguration};
         use starknet::core::types::Felt;
         use starknet::macros::felt;
@@ -171,6 +165,17 @@ mod tests {
         use crate::lock::{LockLayerConfiguration, RelayerLock};
         use crate::rebalancing::{OptionalRebalancingConfiguration, RelayerManagerConfiguration};
         use crate::{RelayerManager, RelayersConfiguration};
+        use paymaster_prices::mock::MockPriceOracle;
+        use paymaster_prices::PriceConfiguration;
+
+        #[derive(Debug)]
+        pub struct MockPrice;
+
+        impl MockPriceOracle for MockPrice {
+            fn new() -> Self {
+                Self
+            }
+        }
 
         #[derive(Debug)]
         pub struct Lock;
@@ -200,10 +205,10 @@ mod tests {
         fn configuration() -> RelayerManagerConfiguration {
             RelayerManagerConfiguration {
                 starknet: StarknetConfiguration {
+                    endpoint: "https://dummy".to_string(),
                     chain_id: ChainID::Sepolia,
-                    endpoint: Endpoint::default_rpc_url(&ChainID::Sepolia).to_string(),
-                    fallbacks: vec![],
                     timeout: 10,
+                    fallbacks: vec![],
                 },
                 supported_tokens: HashSet::from([Token::usdc(&ChainID::Sepolia).address]),
                 gas_tank: StarknetAccountConfiguration {
@@ -217,6 +222,7 @@ mod tests {
                     lock: LockLayerConfiguration::mock_with_timeout::<Lock>(Duration::from_secs(5)),
                     rebalancing: OptionalRebalancingConfiguration::initialize(None),
                 },
+                price: PriceConfiguration::mock::<MockPrice>(),
             }
         }
 

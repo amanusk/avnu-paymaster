@@ -7,7 +7,7 @@ use paymaster_common::service::Service;
 use paymaster_relayer::{Context, RelayerManagerConfiguration, RelayerRebalancingService};
 use paymaster_service::core::context::configuration::Configuration as ServiceConfiguration;
 use paymaster_starknet::constants::Token;
-use paymaster_starknet::math::{format_units, parse_units};
+use paymaster_starknet::math::{denormalize_felt, normalize_felt};
 use paymaster_starknet::transaction::{Calls, TimeBounds};
 use paymaster_starknet::{Client, Configuration};
 use starknet::accounts::{Account, ConnectedAccount};
@@ -59,7 +59,7 @@ pub async fn command_relayers_rebalance(params: RelayersRebalanceCommandParamete
     });
 
     // How much STRK to refund the gas tank with from the master account
-    let additional_strk_balance = parse_units(params.fund, 18);
+    let additional_strk_balance = normalize_felt(params.fund, 18);
 
     // Assert the balance of master is greater than the amount of STRK needed for the refund
     assert_strk_balance(&starknet, params.master_address, additional_strk_balance)
@@ -76,6 +76,7 @@ pub async fn command_relayers_rebalance(params: RelayersRebalanceCommandParamete
         gas_tank: configuration.gas_tank.clone(),
         relayers: configuration.relayers.clone(),
         supported_tokens: configuration.supported_tokens.clone(),
+        price: configuration.clone().into(),
     }))
     .await;
 
@@ -106,7 +107,7 @@ pub async fn command_relayers_rebalance(params: RelayersRebalanceCommandParamete
         if !params.force {
             print!(
                 "Do you want to proceed with the rebalance? This will transfer an additional {} STRK tokens to the gas tank. (y/N): ",
-                format_units(additional_strk_balance, 18)
+                denormalize_felt(additional_strk_balance, 18)
             );
             stdout().flush().unwrap();
 
@@ -124,7 +125,7 @@ pub async fn command_relayers_rebalance(params: RelayersRebalanceCommandParamete
 
         refund_call = Some(
             Transfer {
-                token: Token::strk(&chain_id).address,
+                token: Token::STRK_ADDRESS,
                 recipient: gas_tank.address(),
                 amount: additional_strk_balance,
             }
@@ -165,7 +166,7 @@ pub async fn command_relayers_rebalance(params: RelayersRebalanceCommandParamete
 
     let master_account_nonce = master_account.get_nonce().await.unwrap();
 
-    let estimated_calls = match multi_calls.estimate(&master_account).await {
+    let estimated_calls = match multi_calls.estimate(&master_account, None).await {
         Ok(calls) => calls,
         Err(e) => {
             error!("❌ Failed to estimate calls: {:?}", e);

@@ -79,7 +79,7 @@ impl TestEnvironment {
         let configuration = Configuration {
             rpc: RPCConfiguration { port: 12777 },
 
-            supported_tokens: HashSet::from([Token::eth(starknet.chain_id()).address, Token::usdc(starknet.chain_id()).address]),
+            supported_tokens: HashSet::from([Token::ETH_ADDRESS, Token::usdc(starknet.chain_id()).address]),
             forwarder: StarknetTestEnvironment::FORWARDER,
             gas_tank: StarknetAccountConfiguration {
                 address: StarknetTestEnvironment::FORWARDER,
@@ -108,7 +108,10 @@ impl TestEnvironment {
             },
 
             starknet: starknet.configuration(),
-            price: paymaster_prices::Configuration::Mock(Arc::new(PriceOracle)),
+            price: paymaster_prices::PriceConfiguration {
+                principal: paymaster_prices::PriceOracleConfiguration::Mock(Arc::new(PriceOracle)),
+                fallbacks: vec![],
+            },
             sponsoring: paymaster_sponsoring::Configuration::none(),
         };
 

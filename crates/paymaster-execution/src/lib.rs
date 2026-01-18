@@ -1,27 +1,36 @@
 mod execution;
+
+use std::cmp::max;
 use std::collections::HashSet;
 
+use ::starknet::core::types::{Felt, InvokeTransactionResult, NonZeroFelt};
 pub use execution::*;
+
+pub mod diagnostics;
+pub mod tokens;
 
 #[cfg(feature = "testing")]
 pub mod testing;
 
 mod error;
 mod starknet;
-use ::starknet::core::types::{Felt, InvokeTransactionResult, NonZeroFelt};
+
+use diagnostics::DiagnosticClient;
 pub use error::Error;
 use paymaster_common::{measure_duration, metric};
-use paymaster_prices::{Client as PriceClient, Configuration as PriceConfiguration};
+use paymaster_prices::{Client as PriceClient, PriceConfiguration};
 use paymaster_relayer::{LockedRelayer, RelayerManager, RelayerManagerConfiguration, RelayersConfiguration};
 use paymaster_starknet::transaction::{Calls, EstimatedCalls};
 use paymaster_starknet::{Configuration as StarknetConfiguration, ContractAddress, StarknetAccount, StarknetAccountConfiguration};
-use serde::Deserialize;
 use thiserror::Error;
+mod filter;
+
+pub use filter::TransactionDuplicateFilter;
 
 use crate::starknet::Client as Starknet;
 
 /// Execution client configuration
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct Configuration {
     /// Account used to estimate transaction. This account should only be used
     /// for estimate purpose and its nonce must never change. In the case where
@@ -58,6 +67,7 @@ impl From<Configuration> for RelayerManagerConfiguration {
             gas_tank: value.gas_tank,
             supported_tokens: value.supported_tokens,
             relayers: value.relayers,
+            price: value.price,
         }
     }
 }
@@ -73,6 +83,8 @@ pub struct Client {
 
     estimate_account: StarknetAccount,
     relayers: RelayerManager,
+
+    pub diagnostic_client: DiagnosticClient,
 }
 
 impl Client {
@@ -87,6 +99,8 @@ impl Client {
 
             estimate_account: Starknet::new(&configuration.starknet).initialize_account(&configuration.estimate_account),
             relayers: RelayerManager::new(&configuration.clone().into()),
+
+            diagnostic_client: DiagnosticClient::new(configuration.starknet.chain_id),
         }
     }
 
@@ -135,10 +149,22 @@ impl Client {
     }
 
     /// Estimate the gas cost of a sequence of calls using the account configured for estimation
-    pub async fn estimate(&self, calls: &Calls) -> Result<EstimatedCalls, Error> {
-        let result = calls.estimate(&self.estimate_account).await?;
+    pub async fn estimate(&self, calls: &Calls, tip: TipPriority) -> Result<EstimatedCalls, Error> {
+        let tip = self.get_tip(tip).await?;
+        let result = calls.estimate(&self.estimate_account, Some(tip)).await?;
 
         Ok(result)
+    }
+
+    /// Get the tip value given a priority
+    pub async fn get_tip(&self, tip: TipPriority) -> Result<u64, Error> {
+        let tip: u64 = match tip {
+            TipPriority::Slow => max(self.starknet.fetch_median_tip().await? - 5, 0),
+            TipPriority::Normal => self.starknet.fetch_median_tip().await?,
+            TipPriority::Fast => self.starknet.fetch_median_tip().await? + 5,
+            TipPriority::Custom(tip) => tip,
+        };
+        Ok(tip)
     }
 
     pub fn compute_max_fee_in_strk(&self, base_estimate: Felt) -> Felt {
@@ -202,6 +228,8 @@ mod tests {
 
     use crate::testing::TestEnvironment;
 
+    // TODO: enable when we can fix starknet image
+    #[ignore]
     #[tokio::test]
     async fn apply_max_fee_modifier_properly() {
         let test = TestEnvironment::new().await;
@@ -215,6 +243,8 @@ mod tests {
         assert_eq!(result, Felt::from(33500));
     }
 
+    // TODO: enable when we can fix starknet image
+    #[ignore]
     #[tokio::test]
     async fn apply_provider_fee_overhead_properly() {
         let test = TestEnvironment::new().await;

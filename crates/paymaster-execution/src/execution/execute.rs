@@ -3,12 +3,13 @@ use paymaster_starknet::transaction::{CalldataBuilder, Calls, EstimatedCalls, Ex
 use paymaster_starknet::Signature;
 use starknet::core::types::{Call, Felt, InvokeTransactionResult, TypedData};
 use starknet::macros::selector;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::execution::deploy::DeploymentParameters;
 use crate::execution::ExecutionParameters;
 use crate::{Client, Error};
 
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub enum ExecutableTransactionParameters {
     Deploy {
         deployment: DeploymentParameters,
@@ -22,7 +23,17 @@ pub enum ExecutableTransactionParameters {
     },
 }
 
-#[derive(Debug)]
+impl ExecutableTransactionParameters {
+    pub fn get_unique_identifier(&self) -> u64 {
+        match self {
+            ExecutableTransactionParameters::Deploy { deployment } => deployment.get_unique_identifier(),
+            ExecutableTransactionParameters::Invoke { invoke } => invoke.get_unique_identifier(),
+            ExecutableTransactionParameters::DeployAndInvoke { invoke, .. } => invoke.get_unique_identifier(),
+        }
+    }
+}
+
+#[derive(Debug, Hash)]
 pub struct ExecutableInvokeParameters {
     user: Felt,
     signature: Signature,
@@ -57,6 +68,13 @@ impl ExecutableInvokeParameters {
             *last_call.calldata.get(1).ok_or(Error::InvalidTypedData)?,
         ))
     }
+
+    pub fn get_unique_identifier(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.user.hash(&mut hasher);
+        self.message.nonce().hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 /// Paymaster transaction that contains the parameters to execute the transaction on Starknet
@@ -78,9 +96,16 @@ impl ExecutableTransaction {
     /// Estimate a sponsored transaction which is a transaction that will be paid by the relayer
     pub async fn estimate_sponsored_transaction(self, client: &Client, sponsor_metadata: Vec<Felt>) -> Result<EstimatedExecutableTransaction, Error> {
         let calls = self.build_sponsored_calls(sponsor_metadata);
-        let estimated_calls = client.estimate(&calls).await?;
 
-        Ok(EstimatedExecutableTransaction(estimated_calls))
+        let estimated_calls = client.estimate(&calls, self.parameters.tip()).await?;
+        let fee_estimate = estimated_calls.estimate();
+
+        // We recompute the real estimate fee. Validation step is not included in the fee estimate
+        let paid_fee_in_strk = self.compute_paid_fee(client, Felt::from(fee_estimate.overall_fee)).await?;
+        let final_fee_estimate = fee_estimate.update_overall_fee(paid_fee_in_strk);
+
+        let estimated_final_calls = calls.with_estimate(final_fee_estimate);
+        Ok(EstimatedExecutableTransaction(estimated_final_calls))
     }
 
     /// Estimate an unsponsored transaction which is a transaction that will be paid by the user
@@ -93,7 +118,7 @@ impl ExecutableTransaction {
 
         let calls = self.build_calls(gas_token_transfer);
 
-        let estimated_calls = client.estimate(&calls).await?;
+        let estimated_calls = client.estimate(&calls, self.parameters.tip()).await?;
         let fee_estimate = estimated_calls.estimate();
 
         // We recompute the real estimate fee. Validation step is not included in the fee estimate
@@ -217,10 +242,12 @@ mod tests {
     use crate::execution::build::{InvokeParameters, Transaction, TransactionParameters};
     use crate::execution::deploy::DeploymentParameters;
     use crate::execution::execute::{ExecutableInvokeParameters, ExecutableTransaction, ExecutableTransactionParameters};
-    use crate::execution::{ExecutionParameters, FeeMode};
+    use crate::execution::{ExecutionParameters, FeeMode, TipPriority};
     use crate::testing::transaction::{an_eth_approve, an_eth_transfer};
     use crate::testing::{StarknetTestEnvironment, TestEnvironment};
 
+    // TODO: enable when we can fix starknet image
+    #[ignore]
     #[tokio::test]
     async fn execute_deploy_transaction_sponsored_works_properly() {
         let test = TestEnvironment::new().await;
@@ -255,7 +282,7 @@ mod tests {
 
             transaction: ExecutableTransactionParameters::Deploy { deployment },
             parameters: ExecutionParameters::V1 {
-                fee_mode: FeeMode::Sponsored,
+                fee_mode: FeeMode::Sponsored { tip: TipPriority::Normal },
                 time_bounds: None,
             },
         };
@@ -265,8 +292,9 @@ mod tests {
         assert!(result.is_ok())
     }
 
-    // TODO: fix starknet-devnet
-    // #[tokio::test]
+    // TODO: enable when we can fix starknet image
+    #[ignore]
+    #[tokio::test]
     async fn execute_invoke_transaction_works_properly() {
         let test = TestEnvironment::new().await;
         let account = test.starknet.initialize_account(&StarknetTestEnvironment::ACCOUNT_1);
@@ -279,12 +307,13 @@ mod tests {
             transaction: TransactionParameters::Invoke {
                 invoke: InvokeParameters {
                     user_address: user.address,
-                    calls: Calls::new(vec![an_eth_transfer(account.address(), Felt::ONE, test.starknet.chain_id())]),
+                    calls: Calls::new(vec![an_eth_transfer(account.address(), Felt::ONE)]),
                 },
             },
             parameters: ExecutionParameters::V1 {
                 fee_mode: FeeMode::Default {
                     gas_token: StarknetTestEnvironment::ETH,
+                    tip: TipPriority::Normal,
                 },
                 time_bounds: None,
             },
@@ -312,6 +341,7 @@ mod tests {
             parameters: ExecutionParameters::V1 {
                 fee_mode: FeeMode::Default {
                     gas_token: StarknetTestEnvironment::ETH,
+                    tip: TipPriority::Normal,
                 },
                 time_bounds: None,
             },
@@ -322,8 +352,9 @@ mod tests {
         assert!(result.is_ok())
     }
 
-    // TODO: fix starknet-devnet
-    // #[tokio::test]
+    // TODO: enable when we can fix starknet image
+    #[ignore]
+    #[tokio::test]
     async fn execute_deploy_and_invoke_transaction_works_properly() {
         let test = TestEnvironment::new().await;
         let account = test.starknet.initialize_account(&StarknetTestEnvironment::ACCOUNT_1);
@@ -356,12 +387,13 @@ mod tests {
                 deployment: deployment.clone(),
                 invoke: InvokeParameters {
                     user_address: new_account_address,
-                    calls: Calls::new(vec![an_eth_approve(account.address(), Felt::ZERO, test.starknet.chain_id())]),
+                    calls: Calls::new(vec![an_eth_approve(account.address(), Felt::ZERO)]),
                 },
             },
             parameters: ExecutionParameters::V1 {
                 fee_mode: FeeMode::Default {
                     gas_token: StarknetTestEnvironment::ETH,
+                    tip: TipPriority::Normal,
                 },
                 time_bounds: None,
             },
@@ -390,6 +422,7 @@ mod tests {
             parameters: ExecutionParameters::V1 {
                 fee_mode: FeeMode::Default {
                     gas_token: StarknetTestEnvironment::ETH,
+                    tip: TipPriority::Normal,
                 },
                 time_bounds: None,
             },

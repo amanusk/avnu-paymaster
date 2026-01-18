@@ -91,6 +91,8 @@ pub async fn execute_endpoint(ctx: &RequestContext<'_>, request: ExecuteRequest)
         transaction: request.transaction.try_into()?,
     };
 
+    ctx.transaction_filter.filter(&transaction.transaction)?;
+
     let estimated_transaction = if transaction.parameters.fee_mode().is_sponsored() {
         let authenticated_api_key = ctx.validate_api_key().await?;
         transaction
@@ -112,6 +114,12 @@ pub async fn execute_endpoint(ctx: &RequestContext<'_>, request: ExecuteRequest)
 mod tests {
     use std::vec;
 
+    use crate::endpoint::build::{build_transaction_endpoint, BuildTransactionRequest, BuildTransactionResponse, InvokeParameters, TransactionParameters};
+    use crate::endpoint::common::{ExecutionParameters, FeeMode, TipPriority};
+    use crate::endpoint::execute::{execute_endpoint, ExecutableInvokeParameters, ExecutableTransactionParameters, ExecuteRequest};
+    use crate::endpoint::RequestContext;
+    use crate::testing::TestEnvironment;
+    use crate::{Error, InvokeTransaction};
     use async_trait::async_trait;
     use paymaster_prices::mock::MockPriceOracle;
     use paymaster_prices::TokenPrice;
@@ -119,13 +127,6 @@ mod tests {
     use paymaster_starknet::testing::TestEnvironment as StarknetTestEnvironment;
     use starknet::core::types::Felt;
     use starknet::signers::SigningKey;
-
-    use crate::endpoint::build::{build_transaction_endpoint, BuildTransactionRequest, BuildTransactionResponse, InvokeParameters, TransactionParameters};
-    use crate::endpoint::common::{ExecutionParameters, FeeMode};
-    use crate::endpoint::execute::{execute_endpoint, ExecutableInvokeParameters, ExecutableTransactionParameters, ExecuteRequest};
-    use crate::endpoint::RequestContext;
-    use crate::testing::TestEnvironment;
-    use crate::{Error, InvokeTransaction};
 
     #[derive(Debug, Clone)]
     struct NoPriceOracle;
@@ -148,6 +149,8 @@ mod tests {
         }
     }
 
+    // TODO: enable when we can fix starknet image
+    #[ignore]
     #[tokio::test]
     async fn return_error_if_not_available() {
         let test = TestEnvironment::new().await;
@@ -158,16 +161,13 @@ mod tests {
             transaction: TransactionParameters::Invoke {
                 invoke: InvokeParameters {
                     user_address: StarknetTestEnvironment::ACCOUNT_ARGENT_1.address,
-                    calls: vec![an_eth_transfer(
-                        StarknetTestEnvironment::ACCOUNT_2.address,
-                        Felt::ONE,
-                        &context.configuration.starknet.chain_id,
-                    )],
+                    calls: vec![an_eth_transfer(StarknetTestEnvironment::ACCOUNT_2.address, Felt::ONE)],
                 },
             },
             parameters: ExecutionParameters::V1 {
                 fee_mode: FeeMode::Default {
                     gas_token: StarknetTestEnvironment::ETH,
+                    tip: TipPriority::Normal,
                 },
                 time_bounds: None,
             },
@@ -194,6 +194,7 @@ mod tests {
             parameters: ExecutionParameters::V1 {
                 fee_mode: FeeMode::Default {
                     gas_token: StarknetTestEnvironment::ETH,
+                    tip: TipPriority::Normal,
                 },
                 time_bounds: None,
             },
@@ -203,8 +204,9 @@ mod tests {
         assert!(matches!(result, Err(Error::ServiceNotAvailable)))
     }
 
-    // TODO: Fix starknet-devnet
-    // #[tokio::test]
+    // TODO: enable when we can fix starknet image
+    #[ignore]
+    #[tokio::test]
     async fn execute_works_properly() {
         let test = TestEnvironment::new().await;
         let request_context = RequestContext::empty(&test.context());
@@ -213,16 +215,13 @@ mod tests {
             transaction: TransactionParameters::Invoke {
                 invoke: InvokeParameters {
                     user_address: StarknetTestEnvironment::ACCOUNT_ARGENT_1.address,
-                    calls: vec![an_eth_transfer(
-                        StarknetTestEnvironment::ACCOUNT_2.address,
-                        Felt::ONE,
-                        &request_context.configuration.starknet.chain_id,
-                    )],
+                    calls: vec![an_eth_transfer(StarknetTestEnvironment::ACCOUNT_2.address, Felt::ONE)],
                 },
             },
             parameters: ExecutionParameters::V1 {
                 fee_mode: FeeMode::Default {
                     gas_token: StarknetTestEnvironment::ETH,
+                    tip: TipPriority::Normal,
                 },
                 time_bounds: None,
             },
@@ -252,6 +251,7 @@ mod tests {
             parameters: ExecutionParameters::V1 {
                 fee_mode: FeeMode::Default {
                     gas_token: StarknetTestEnvironment::ETH,
+                    tip: TipPriority::Normal,
                 },
                 time_bounds: None,
             },

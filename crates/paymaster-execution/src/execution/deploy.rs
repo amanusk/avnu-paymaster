@@ -6,12 +6,13 @@ use starknet::accounts::Account;
 use starknet::core::serde::unsigned_field_element::UfeHex;
 use starknet::core::types::{BroadcastedInvokeTransactionV3, BroadcastedTransaction, Call, DataAvailabilityMode, Felt, ResourceBounds, ResourceBoundsMapping};
 use starknet::macros::selector;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
-use crate::{Client, Error};
+use crate::{Client, Error, TipPriority};
 
 /// Deployment parameters required to deploy a contract
 #[serde_as]
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Hash)]
 pub struct DeploymentParameters {
     #[serde_as(as = "UfeHex")]
     pub address: Felt,
@@ -36,9 +37,10 @@ pub struct DeploymentParameters {
 
 impl DeploymentParameters {
     /// Convert the deployment parameters to a starknet transaction
-    pub(crate) async fn build_transaction(&self, client: &Client) -> Result<BroadcastedTransaction, Error> {
+    pub(crate) async fn build_transaction(&self, client: &Client, tip: TipPriority) -> Result<BroadcastedTransaction, Error> {
         let estimate_account = client.estimate_account.address();
         let estimate_account_nonce = client.starknet.fetch_nonce(estimate_account).await?;
+        let tip = client.get_tip(tip).await?;
 
         Ok(BroadcastedTransaction::Invoke(BroadcastedInvokeTransactionV3 {
             sender_address: estimate_account,
@@ -59,7 +61,7 @@ impl DeploymentParameters {
                     max_price_per_unit: 0,
                 },
             },
-            tip: 0,
+            tip,
             paymaster_data: vec![],
             account_deployment_data: vec![],
             nonce_data_availability_mode: DataAvailabilityMode::L1,
@@ -113,5 +115,11 @@ impl DeploymentParameters {
             selector: selector!("deploy_braavos_account"),
             calldata: CalldataBuilder::new().encode(&self.salt).encode(&sigdata).build(),
         }
+    }
+
+    pub fn get_unique_identifier(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
     }
 }

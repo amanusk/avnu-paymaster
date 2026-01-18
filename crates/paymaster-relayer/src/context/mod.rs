@@ -1,15 +1,13 @@
+use paymaster_prices::Client as PriceClient;
 use paymaster_starknet::Client;
 
 use crate::lock::LockLayer;
 use crate::rebalancing::RelayerManagerConfiguration;
 
 pub mod configuration;
-use paymaster_common::service::messaging::Messages;
 
 mod relayers;
 pub use relayers::Relayers;
-
-use crate::Message;
 
 #[derive(Clone)]
 pub struct Context {
@@ -17,7 +15,7 @@ pub struct Context {
     pub starknet: Client,
     pub relayers: Relayers,
     pub relayers_locks: LockLayer,
-    pub messages: Messages<Message>,
+    pub price: PriceClient,
 }
 
 impl Context {
@@ -28,14 +26,14 @@ impl Context {
         }
 
         let starknet = Client::new(&configuration.starknet);
-        let messages = Messages::new();
-        let relayers = Relayers::new(&starknet, messages.clone(), &configuration.relayers);
+        let relayers = Relayers::new(&starknet, &configuration.relayers);
+        let price = PriceClient::new(&configuration.price);
         Self {
             starknet,
             relayers,
             relayers_locks: LockLayer::new(&configuration),
+            price,
             configuration,
-            messages,
         }
     }
 }
