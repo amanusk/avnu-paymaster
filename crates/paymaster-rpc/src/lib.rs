@@ -17,7 +17,7 @@ pub use endpoint::build::{
     BuildTransactionRequest, BuildTransactionResponse, DeployAndInvokeTransaction, DeployTransaction, FeeEstimate, InvokeParameters, InvokeTransaction,
     TransactionParameters,
 };
-pub use endpoint::common::{DeploymentParameters, ExecutionParameters, FeeMode, TimeBounds};
+pub use endpoint::common::{DeploymentParameters, ExecutionParameters, FeeMode, TimeBounds, TipPriority};
 pub use endpoint::execute::{ExecutableInvokeParameters, ExecutableTransactionParameters, ExecuteRequest, ExecuteResponse};
 pub use endpoint::token::TokenPrice;
 

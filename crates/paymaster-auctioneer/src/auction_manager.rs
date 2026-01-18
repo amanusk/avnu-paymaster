@@ -294,7 +294,7 @@ impl Default for AuctionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use paymaster_rpc::{DeployTransaction, DeploymentParameters, ExecutionParameters, FeeEstimate, FeeMode};
+    use paymaster_rpc::{DeployTransaction, DeploymentParameters, ExecutionParameters, FeeEstimate, FeeMode, TipPriority};
     use starknet::core::types::Felt;
 
     #[test]
@@ -324,6 +324,7 @@ mod tests {
             parameters: ExecutionParameters::V1 {
                 fee_mode: FeeMode::Default {
                     gas_token: Felt::from_hex("0x789").unwrap(),
+                    tip: TipPriority::default(),
                 },
                 time_bounds: None,
             },
@@ -356,6 +357,7 @@ mod tests {
             parameters: ExecutionParameters::V1 {
                 fee_mode: FeeMode::Default {
                     gas_token: Felt::from_hex("0x789").unwrap(),
+                    tip: TipPriority::default(),
                 },
                 time_bounds: None,
             },
@@ -390,7 +392,7 @@ mod tests {
                 version: 1,
             },
             parameters: ExecutionParameters::V1 {
-                fee_mode: FeeMode::Default { gas_token },
+                fee_mode: FeeMode::Default { gas_token, tip: TipPriority::default() },
                 time_bounds: None,
             },
             fee: FeeEstimate {
@@ -442,7 +444,7 @@ mod tests {
                 version: 1,
             },
             parameters: ExecutionParameters::V1 {
-                fee_mode: FeeMode::Default { gas_token },
+                fee_mode: FeeMode::Default { gas_token, tip: TipPriority::default() },
                 time_bounds: None,
             },
             fee: FeeEstimate {
@@ -493,7 +495,7 @@ mod tests {
                     version: 1,
                 },
                 parameters: ExecutionParameters::V1 {
-                    fee_mode: FeeMode::Default { gas_token },
+                    fee_mode: FeeMode::Default { gas_token, tip: TipPriority::default() },
                     time_bounds: None,
                 },
                 fee: FeeEstimate {
@@ -538,7 +540,7 @@ mod tests {
                 version: 1,
             },
             parameters: ExecutionParameters::V1 {
-                fee_mode: FeeMode::Default { gas_token },
+                fee_mode: FeeMode::Default { gas_token, tip: TipPriority::default() },
                 time_bounds: None,
             },
             fee: FeeEstimate {

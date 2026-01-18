@@ -57,7 +57,7 @@ mod tests {
                 },
             },
             parameters: paymaster_rpc::ExecutionParameters::V1 {
-                fee_mode: paymaster_rpc::FeeMode::Sponsored,
+                fee_mode: paymaster_rpc::FeeMode::Sponsored { tip: paymaster_rpc::TipPriority::default() },
                 time_bounds: Some(paymaster_rpc::TimeBounds {
                     execute_after: 0,
                     execute_before: 0,
@@ -97,7 +97,7 @@ mod tests {
                         },
                     },
                     parameters: paymaster_rpc::ExecutionParameters::V1 {
-                        fee_mode: paymaster_rpc::FeeMode::Sponsored,
+                        fee_mode: paymaster_rpc::FeeMode::Sponsored { tip: paymaster_rpc::TipPriority::default() },
                         time_bounds: Some(paymaster_rpc::TimeBounds {
                             execute_after: 0,
                             execute_before: 0,
@@ -149,7 +149,7 @@ mod tests {
                 },
             },
             parameters: paymaster_rpc::ExecutionParameters::V1 {
-                fee_mode: paymaster_rpc::FeeMode::Default { gas_token: token_address },
+                fee_mode: paymaster_rpc::FeeMode::Default { gas_token: token_address, tip: paymaster_rpc::TipPriority::default() },
                 time_bounds: None,
             },
         };
@@ -234,7 +234,7 @@ mod tests {
         match request.parameters {
             paymaster_rpc::ExecutionParameters::V1 { fee_mode, time_bounds } => {
                 match fee_mode {
-                    paymaster_rpc::FeeMode::Default { gas_token } => {
+                    paymaster_rpc::FeeMode::Default { gas_token, .. } => {
                         assert_eq!(
                             gas_token,
                             starknet::core::types::Felt::from_hex("0x49d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7").unwrap()
@@ -272,7 +272,7 @@ mod tests {
                 },
             },
             parameters: paymaster_rpc::ExecutionParameters::V1 {
-                fee_mode: paymaster_rpc::FeeMode::Sponsored,
+                fee_mode: paymaster_rpc::FeeMode::Sponsored { tip: paymaster_rpc::TipPriority::default() },
                 time_bounds: Some(paymaster_rpc::TimeBounds {
                     execute_after: 0,
                     execute_before: 0,
@@ -298,7 +298,7 @@ mod tests {
                 },
             },
             parameters: paymaster_rpc::ExecutionParameters::V1 {
-                fee_mode: paymaster_rpc::FeeMode::Sponsored,
+                fee_mode: paymaster_rpc::FeeMode::Sponsored { tip: paymaster_rpc::TipPriority::default() },
                 time_bounds: Some(paymaster_rpc::TimeBounds {
                     execute_after: 0,
                     execute_before: 0,
@@ -376,6 +376,7 @@ mod tests {
             parameters: paymaster_rpc::ExecutionParameters::V1 {
                 fee_mode: paymaster_rpc::FeeMode::Default {
                     gas_token: Felt::from_hex("0x789").unwrap(),
+                    tip: paymaster_rpc::TipPriority::default(),
                 },
                 time_bounds: None,
             },
